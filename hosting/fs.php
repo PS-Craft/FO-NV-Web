@@ -12,14 +12,16 @@
 
 declare(strict_types=1);
 
-$cfgFile = __DIR__ . '/fs-config.php';
-if (!is_file($cfgFile)) { http_response_code(500); exit('fs-config.php fehlt'); }
-$CFG = require $cfgFile;
-$GAME = rtrim((string)$CFG['game'], '/');
-$DATA = rtrim((string)$CFG['data'], '/');
-$MOBILE = isset($CFG['mobile']) ? rtrim((string)$CFG['mobile'], '/') : '';
-$CACHE = rtrim((string)($CFG['cache'] ?? $DATA . '/../fnv-cache'), '/');
-$DLC = !empty($CFG['dlc']);
+require __DIR__ . '/lib.php';
+$CFG = cfg();
+$GAME = $CFG['game'];
+$MOBILE = $CFG['mobile'];
+$CACHE = $CFG['cache'];
+$USER = current_user();
+if ($USER === null && is_file($CFG['htpasswd'])) { header('WWW-Authenticate: Basic realm="Privat"'); http_response_code(401); exit; }
+// Spielstände und Einstellungen pro Benutzer; DLCs pro Benutzer ein-/ausschaltbar (api.php -> dlc)
+$DATA = user_data_dir($USER);
+$DLC = array_keys(array_filter(dlc_prefs($USER)));   // eingeschaltete DLC-Namen (klein)
 
 if (function_exists('apache_setenv')) @apache_setenv('no-gzip', '1');   // Blöcke nicht nachkomprimieren
 @ini_set('zlib.output_compression', '0');
@@ -44,7 +46,7 @@ function json(array|object $v): string {
 }
 
 // ---- Index der Installation (einmal erzeugt, als Datei zwischengespeichert) -----------------------------
-function buildIndex(string $game, string $mobile, bool $dlc): string {
+function buildIndex(string $game, string $mobile, array $dlc): string {
     $files = [];
     $dirs = [];
     $walk = function (string $dir, string $key) use (&$walk, &$files, &$dirs, $dlc): void {
@@ -55,7 +57,8 @@ function buildIndex(string $game, string $mobile, bool $dlc): string {
             if ($name === '.' || $name === '..') continue;
             $real = $dir . '/' . $name;
             $isFile = is_file($real);
-            if ($isFile && !$dlc && preg_match('/\.nam$/i', $name)) continue;   // DLC-Marker verstecken
+            // DLC-Marker (.nam) ausgeschalteter DLCs verstecken: ohne .nam lädt das Spiel das DLC nicht
+            if ($isFile && preg_match('/^(.+)\.nam$/i', $name, $mm) && !in_array(strtolower($mm[1]), $dlc, true)) continue;
             $names[] = $name;
             $k = $key . '/' . strtolower($name);
             if (is_dir($real)) $walk($real, $k);
@@ -68,10 +71,10 @@ function buildIndex(string $game, string $mobile, bool $dlc): string {
     return json(['f' => (object)$files, 'd' => (object)$dirs]);
 }
 
-function gameIndex(string $game, string $mobile, bool $dlc, string $cache): array {
+function gameIndex(string $game, string $mobile, array $dlc, string $cache): array {
     static $idx = null;
     if ($idx !== null) return $idx;
-    $file = $cache . '/index-' . ($dlc ? 'dlc' : 'base') . '.json';
+    $file = $cache . '/index-' . ($dlc ? substr(sha1(implode(',', $dlc)), 0, 12) : 'base') . '.json';
     $newest = max(@filemtime($game) ?: 0, @filemtime($game . '/Data') ?: 0, @filemtime($game . '/data') ?: 0,
                   $mobile !== '' ? (@filemtime($mobile) ?: 0) : 0, @filemtime(__DIR__ . '/fs-config.php') ?: 0);
     $mt = @filemtime($file);

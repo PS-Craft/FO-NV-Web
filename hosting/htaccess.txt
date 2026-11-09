@@ -8,13 +8,12 @@ Options -Indexes
 DirectoryIndex index.html
 
 # ---- Passwortschutz ---------------------------------------------------------------------------------
-# Variante A (empfohlen bei all-inkl): im KAS unter "Tools -> Verzeichnisschutz" für diesen Ordner
-#   einrichten. Das KAS ergänzt die nötigen Zeilen selbst – diesen Block dann auskommentiert lassen.
-# Variante B: .htpasswd selbst anlegen (siehe Anleitung) und die drei Zeilen aktivieren:
-#AuthType Basic
-#AuthName "Privat"
-#AuthUserFile /ABSOLUTER/PFAD/ZUR/.htpasswd
-#Require valid-user
+# Die Benutzerliste verwaltet das Admin-Center der App (fnv-private/.htpasswd). Beim ersten Hochladen enthält sie
+# nur "admin" mit dem Startpasswort; die App verlangt nach dem ersten Login ein neues. build.ps1 trägt den Pfad ein.
+AuthType Basic
+AuthName "Privat"
+AuthUserFile __HTPASSWD__
+Require valid-user
 
 # ---- Header für SharedArrayBuffer (WASM-Threads) ------------------------------------------------------
 SetEnvIf Request_URI "." FNV_APACHE_HEADERS=1
@@ -57,10 +56,17 @@ SetEnvIfNoCase Request_URI "\.(br|gz)$" no-gzip=1
   RewriteEngine On
 
   # interne Dateien nie ausliefern
-  RewriteRule ^(fs-config\.php|dev-router\.php|fnv-data/|fnv-cache/) - [F,L]
+  RewriteRule ^(fs-config\.php|lib\.php|dev-router\.php|fnv-data/|fnv-cache/|fnv-private/) - [F,L]
 
   # Datei-API des Spiels
   RewriteRule ^fs/([a-z]+)$ fs.php?op=$1 [QSA,L]
+
+  # App-Schnittstelle (Speicherstände, Backups, DLCs, Cheats, Admin)
+  RewriteRule ^api/([a-z/]+)$ api.php?r=$1 [QSA,L]
+
+  # PHP leitet Basic-Auth-Daten bei CGI/FPM sonst nicht weiter
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
   # Problemberichte nimmt dieser Server nicht an (die Seite bietet sie dann zum Download an)
   RewriteRule ^report$ - [R=404,L]

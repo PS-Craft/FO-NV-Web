@@ -31,3 +31,8 @@ upload/
 *.wasm
 hosting/fs-config.php
 .htpasswd
+
+# lokale Zugangsdaten fürs Hochladen
+pc/deploy.local.json
+pc/deploy.password.xml
+pc/deploy.log
