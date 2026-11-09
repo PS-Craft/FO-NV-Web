@@ -34,9 +34,9 @@ const log = (m) => console.log(`${String(++step).padStart(2)}. ${m}`);
   await p.click('#save');
   await p.waitForSelector('.toast.error');
   await p.fill('#new2', NEW_PW);
-  p.once('dialog', (d) => d.accept());
+  const done1 = p.waitForEvent('dialog');
   await p.click('#save');
-  await p.waitForTimeout(800);
+  await (await done1).accept();   // „Passwort geändert“ erscheint erst nach erfolgreichem Speichern
   await c.close();
   log('Startpasswort → Pflicht zum Ändern, Dialog nicht abbrechbar, Tippfehler erkannt, Passwort geändert');
 
@@ -156,9 +156,9 @@ const log = (m) => console.log(`${String(++step).padStart(2)}. ${m}`);
   await p.fill('#cur', 'Lisa-Start-123');
   await p.fill('#new1', 'Lisa-Eigenes-1');
   await p.fill('#new2', 'Lisa-Eigenes-1');
-  p.once('dialog', (d) => d.accept());
+  const done2 = p.waitForEvent('dialog');
   await p.click('#save');
-  await p.waitForTimeout(800);
+  await (await done2).accept();
   await c.close();
   c = await ctx('lisa', 'Lisa-Eigenes-1');
   p = await c.newPage();

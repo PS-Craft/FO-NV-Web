@@ -58,13 +58,24 @@ export const api = {
   link: (route: string) => url(route),
 };
 
-/** Läuft die App auf dem eigenen Server (mit API)? */
-export async function detectServer(): Promise<Me | null> {
+/** Diagnose-Version ohne eigenen Server (GitHub Pages oder lokale Entwicklung). */
+export const isDiagnosticHost = (host = location.hostname) =>
+  host.endsWith('github.io') || host === 'localhost' || host === '127.0.0.1';
+
+export interface ServerProblem {
+  status: number;
+  text: string;
+}
+
+/** Läuft die App auf dem eigenen Server (mit API)? null = keine API; ServerProblem = API kaputt (z. B. PHP). */
+export async function detectServer(): Promise<Me | null | ServerProblem> {
   try {
     const r = await fetch(url('me'), { credentials: 'same-origin' });
-    if (!r.ok || !(r.headers.get('content-type') || '').includes('json')) return null;
-    return (await r.json()) as Me;
-  } catch {
-    return null;
+    const type = r.headers.get('content-type') || '';
+    if (r.ok && type.includes('json')) return (await r.json()) as Me;
+    if (isDiagnosticHost()) return null;
+    return { status: r.status, text: (await r.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400) };
+  } catch (e) {
+    return isDiagnosticHost() ? null : { status: 0, text: String(e) };
   }
 }
