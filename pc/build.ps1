@@ -56,7 +56,6 @@ try {
     $Up = Join-Path $Root 'upload'
     $asm = @('node', 'tools/assemble.mjs', '--recomp', (Join-Path $Recomp 'out\dist'), '--out', $Up, '--remote-base', $cfg.remoteBase, '--init-private')
     if ($cfg.dlcDefault) { $asm += '--dlc' }
-    if ($cfg.dlcDefault) { $asm += '--dlc' }
     Run 'Upload-Ordner zusammenstellen' $asm
 } finally { Pop-Location }
 Copy-Item -Recurse (Join-Path $Recomp 'out\mobile') (Join-Path $Up 'fnv-mobile')
