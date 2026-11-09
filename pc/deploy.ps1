@@ -40,6 +40,8 @@ $lines = @(
     )
 $lines += $webMkdir
 $lines += "synchronize remote -criteria=size `"$Up\www`" `"$web`""
+# Dateien im Stammordner immer neu senden (nur Dateien, keine Unterordner): der Größenabgleich übersieht z. B. eine neue index.html mit gleicher Länge
+$lines += "put -filemask=`"|*/`" `"$Up\www\*`" `"$($web.TrimEnd('/'))/`""
 $lines += "synchronize remote -criteria=size `"$Up\fnv-mobile`" `"$base/fnv-mobile`""
 if ($GameFiles) {
     $lines += "put `"$env:FNV_GAME\FalloutNV.exe`" `"$base/fnv-game/`""

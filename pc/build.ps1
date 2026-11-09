@@ -59,7 +59,9 @@ try {
     $Up = Join-Path $Root 'upload'
     if (-not $cfg.serverBase) { throw 'serverBase fehlt in pc\deploy.local.json (absoluter Server-Pfad, siehe deploy.example.json)' }
     $asm = @('node', 'tools/assemble.mjs', '--recomp', (Join-Path $Recomp 'out\dist'), '--out', $Up,
-             '--server-base', $cfg.serverBase, '--web-folder', [string]$cfg.webFolder, '--init-private')
+             '--server-base', $cfg.serverBase, '--init-private')
+    # Leere Argumente verschluckt Windows PowerShell 5.1 beim Aufruf von node: --web-folder dann ganz weglassen
+    if ([string]$cfg.webFolder) { $asm += '--web-folder', [string]$cfg.webFolder }
     if ($cfg.dlcDefault) { $asm += '--dlc' }
     Run 'Upload-Ordner zusammenstellen' $asm
 } finally { Pop-Location }
