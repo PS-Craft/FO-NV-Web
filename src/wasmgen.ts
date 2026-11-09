@@ -35,7 +35,7 @@ function str(s: string, out: number[]): void {
 }
 
 /** Ein Funktionsrumpf von ungefähr `bytes` Bytes. */
-function body(index: number, bytes: number): number[] {
+function body(index: number, bytes: number, calls = true): number[] {
   const code: number[] = [];
   let rep = 0;
   while (code.length < bytes) {
@@ -47,7 +47,7 @@ function body(index: number, bytes: number): number[] {
     code.push(0x20, 0x00, 0x20, 0x02, 0x36, 0x02); leb(off + 4, code); // i32.store
     code.push(0x20, 0x01, 0x41, 0x01, 0x71, 0x04, 0x40);             // if (l1 & 1)
     code.push(0x20, 0x02, 0x41, 0x03, 0x6c, 0x21, 0x03, 0x0b);       //   l3 = l2 * 3; end
-    if (index % 16 !== 0 && rep === 39) {                            // einmal die Vorgängerin aufrufen (Tiefe ≤ 16)
+    if (calls && index % 16 !== 0 && rep === 39) {                            // einmal die Vorgängerin aufrufen (Tiefe ≤ 16)
       code.push(0x20, 0x00, 0x20, 0x01, 0x10); leb(index - 1, code); code.push(0x21, 0x01);
     }
     rep++;
@@ -63,21 +63,26 @@ function body(index: number, bytes: number): number[] {
  * @param totalBytes ungefähre Größe des Moduls
  * @param memPages   Seiten (64 KB) des importierten, geteilten Speichers (min = max)
  */
-export function makeModule(totalBytes: number, memPages: number): Uint8Array {
+export function makeModule(totalBytes: number, memPages: number, giants: number[] = []): Uint8Array {
   const fnBytes = 4096;
-  const count = Math.max(1, Math.round(totalBytes / fnBytes));
+  const giantTotal = giants.reduce((a, b) => a + b, 0);
+  const small = Math.max(1, Math.round(Math.max(0, totalBytes - giantTotal) / fnBytes));
+  const count = small + giants.length;
   const type = [0x01, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f];           // (i32, i32) -> i32
   const imp: number[] = [0x01];
   str('env', imp); str('mem', imp);
   imp.push(0x02, 0x03); leb(memPages, imp); leb(memPages, imp);       // memory, shared, min = max
   const fns: number[] = []; leb(count, fns); for (let i = 0; i < count; i++) fns.push(0x00);
-  const exp: number[] = [0x01]; str('run', exp); exp.push(0x00); leb(count - 1, exp);
+  // run = letzte kleine Funktion; g0, g1, … = die riesigen Funktionen (zum Heißlaufen in Threads)
+  const exp: number[] = []; leb(1 + giants.length, exp);
+  str('run', exp); exp.push(0x00); leb(small - 1, exp);
+  giants.forEach((_, k) => { str('g' + k, exp); exp.push(0x00); leb(small + k, exp); });
   const parts: Uint8Array[] = [];
   const codeHead: number[] = []; leb(count, codeHead);
   parts.push(new Uint8Array(codeHead));
   let codeLen = codeHead.length;
   for (let i = 0; i < count; i++) {
-    const b = new Uint8Array(body(i, fnBytes));
+    const b = new Uint8Array(i < small ? body(i, fnBytes) : body(i, giants[i - small]!, false));
     parts.push(b);
     codeLen += b.length;
   }
