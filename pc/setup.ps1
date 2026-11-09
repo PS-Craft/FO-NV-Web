@@ -55,6 +55,8 @@ Pop-Location
 
 Step '5/6 Steam-Installation finden'
 $steamGame = @(
+    # GOG-Kopie zuerst: die Steam-EXE ist verschlüsselt (SteamStub) und wird vom Projekt nicht akzeptiert
+    "C:\GOG Games\Fallout New Vegas",
     "${env:ProgramFiles(x86)}\Steam\steamapps\common\Fallout New Vegas",
     "$env:ProgramFiles\Steam\steamapps\common\Fallout New Vegas"
 ) + (Get-PSDrive -PSProvider FileSystem | ForEach-Object { "$($_.Root)SteamLibrary\steamapps\common\Fallout New Vegas" }) |

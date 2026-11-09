@@ -1,4 +1,4 @@
-# FO-NV-Web – alles auf das Weblaufwerk hochladen (WinSCP, SFTP oder FTPS).
+﻿# FO-NV-Web – alles auf das Weblaufwerk hochladen (WinSCP, SFTP oder FTPS).
 #
 #   .\deploy.ps1               App + Spiel-Build + iPad-Archive (schnell, nur Geändertes)
 #   .\deploy.ps1 -GameFiles    zusätzlich einmalig FalloutNV.exe + Data\ (~10 GB, dauert)
@@ -31,16 +31,19 @@ $openArgs = if ($proto -eq 'sftp') { '-hostkey=*' } else { '' }
 $base = ([string]$cfg.remoteBase).TrimEnd('/')
 $web = if ([string]$cfg.webFolder) { "$base/$($cfg.webFolder.Trim('/'))" } else { if ($base) { $base } else { '/' } }
 
+# mkdir "/" bricht die FTP-Sitzung ab, der Stamm existiert immer
+$webMkdir = if ($web -ne '/') { @("mkdir `"$web`"") } else { @() }
 $lines = @(
     'option batch abort', 'option confirm off',
     "open `"$url`" $openArgs",
-    "mkdir `"$base/fnv-private`"", "mkdir `"$base/fnv-data`"", "mkdir `"$base/fnv-cache`"", "mkdir `"$base/fnv-mobile`"", "mkdir `"$base/fnv-game`"",
-    "mkdir `"$web`"",
-    "synchronize remote -criteria=size `"$Up\www`" `"$web`"",
-    "synchronize remote -criteria=size `"$Up\fnv-mobile`" `"$base/fnv-mobile`""
-)
+    "mkdir `"$base/fnv-private`"", "mkdir `"$base/fnv-data`"", "mkdir `"$base/fnv-cache`"", "mkdir `"$base/fnv-mobile`"", "mkdir `"$base/fnv-game`""
+    )
+$lines += $webMkdir
+$lines += "synchronize remote -criteria=size `"$Up\www`" `"$web`""
+$lines += "synchronize remote -criteria=size `"$Up\fnv-mobile`" `"$base/fnv-mobile`""
 if ($GameFiles) {
     $lines += "put `"$env:FNV_GAME\FalloutNV.exe`" `"$base/fnv-game/`""
+    $lines += "mkdir `"$base/fnv-game/Data`""
     $lines += "synchronize remote -criteria=size `"$env:FNV_GAME\Data`" `"$base/fnv-game/Data`""
 }
 $lines += 'exit'
