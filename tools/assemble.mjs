@@ -15,6 +15,7 @@
 //                Nur die .htaccess braucht ihn (AuthUserFile). Bei all-inkl: /www/htdocs/<account>/<FTP-Startordner>.
 // --web-folder:  Ordner der (Sub-)Domain relativ dazu ('' = die Domain zeigt direkt auf server-base).
 // fs-config.php rechnet alle Pfade selbst relativ zu ihrem eigenen Ordner aus (__DIR__) – unabhängig vom FTP-Pfad.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,12 +44,13 @@ fs.cpSync(recomp, www, { recursive: true });
 for (const ext of ['', '.gz', '.br']) fs.rmSync(path.join(www, 'index.html' + ext), { force: true });
 let game = fs.readFileSync(path.join(recomp, 'index.html'), 'utf8');
 if (!game.includes('</body>')) fail('index.html des Spiels hat kein </body>');
+// Werbeskript der öffentlichen Seite: auf dem privaten Server nicht laden (Datenschutz; COEP blockt es ohnehin)
+game = game.replace(/<script[^>]*adsbygoogle[\s\S]*?<\/script>\s*/g, '');
 game = game.replace('</body>', '<script src="addons.js"></script>\n</body>');
 fs.writeFileSync(path.join(www, 'game.html'), game);
 
 // 2) unsere App (überschreibt nichts vom Spiel außer index.html)
 for (const f of fs.readdirSync(appDist)) {
-  if (f === 'sw.js') continue;                       // auf dem eigenen Server kein Service Worker
   fs.cpSync(path.join(appDist, f), path.join(www, f), { recursive: true });
 }
 
@@ -72,7 +74,22 @@ return [
 ];
 `);
 
-// 4) beim ersten Hochladen: Startzugang
+// 4) Liste der App-Dateien für den Offline-Betrieb (Datenmanager, sw.js); "version" ändert sich mit jedem Inhalt
+const offline = [];
+const hash = crypto.createHash('sha1');
+const walk = (dir, rel) => {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const r = rel ? rel + '/' + e.name : e.name;
+    if (e.isDirectory()) { walk(path.join(dir, e.name), r); continue; }
+    if (/\.(php|br|gz|map)$/.test(e.name) || e.name.startsWith('.')) continue;
+    offline.push(r);
+    hash.update(r + '\0').update(fs.readFileSync(path.join(dir, e.name)));
+  }
+};
+walk(www, '');
+fs.writeFileSync(path.join(www, 'offline.json'), JSON.stringify({ version: hash.digest('hex').slice(0, 16), files: offline }));
+
+// 5) beim ersten Hochladen: Startzugang
 if (flag('--init-private')) {
   fs.mkdirSync(path.join(out, 'fnv-private'), { recursive: true });
   fs.copyFileSync(path.join(REPO, 'hosting', 'initial-admin.htpasswd.txt'), path.join(out, 'fnv-private', '.htpasswd'));

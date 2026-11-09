@@ -101,15 +101,30 @@ Prüfwert; Claude hat es dir im Chat gegeben). `fs-config.php` und `.htaccess` w
 |---|---|
 | **Spielen** | Spiel starten, letzter Spielstand, Überblick |
 | **Spielstände** | Liste, Herunterladen, Hochladen, Löschen; **Backups** als ZIP anlegen, herunterladen, einspielen, wiederherstellen (vorher automatische Sicherheitskopie) |
-| **Spieldaten** | **DLCs einzeln an/aus** (pro Spieler), Speicherbelegung auf dem Gerät |
+| **Spieldaten** | **DLCs einzeln an/aus** (pro Spieler); **Datenmanager**: Spiel aufs Gerät laden (offline spielen), Spielstände in der Cloud |
 | **Cheats** | Freischalten mit Cheat-Passwort; im Spiel dann über **☰** |
 | **Admin** | Spieler-Zugänge (anlegen, Passwort zurücksetzen, Admin-Rechte, löschen), Cheat-Passwörter |
 | **Diagnose** | Systemcheck und Belastungstest |
 
-**Im Spiel:** standardmäßig **randlos** (Bild füllt den Bildschirm, keine Leisten). Winziger **☰**-Knopf oben in
-der Mitte: Zur App · Vollbild · Randlos/Mit Leiste · Cheats (Gott-Modus, Durch Wände, Heilen, Kronkorken,
-Erfahrung, Tragkraft, Kartenorte, Unentdeckt, KI anhalten, eigener Konsolenbefehl). Touch-Steuerung des Spiels
-bleibt unverändert.
+**Anzeige** (unter „Spielen“ wählbar, auch im Spiel-Menü): **Vollbild** (ab dem ersten Tippen/Klicken),
+**Fenster** (randlos, ohne Leisten und Knöpfe) oder **Mit Leiste** (Originalseite). **Menü im Spiel:** Taste **F8**
+oder oben in der Mitte tippen (mit der Maus erscheint dort ☰): Zur App · Anzeige · Cheats (Gott-Modus, Durch Wände,
+Heilen, Kronkorken, Erfahrung, Tragkraft, Kartenorte, Unentdeckt, KI anhalten, eigener Konsolenbefehl).
+Touch-Steuerung des Spiels bleibt unverändert.
+
+**Spielstände** speichert das Spiel auf dem Server (`fnv-data/<Spieler>`), sie erscheinen unter „Spielstände“.
+
+### Offline spielen (Datenmanager, Tab „Spieldaten“)
+
+- **Herunterladen** lädt das Spiel einmal aufs Gerät: Qualität **Hoch** (PC, ~10 GB mit DLCs) oder **Niedrig**
+  (iPad, ~7 GB), dazu die eingeschalteten DLCs. Anhalten/Fortsetzen jederzeit, auch nach Abbruch der Verbindung.
+- Danach startet das Spiel **vom Gerät**: keine Wartezeit auf den Server, kaum Latenz, und es läuft **ohne Internet**.
+- **Spielstände in der Cloud:** werden auf dem Gerät gespeichert und im Hintergrund mit dem Server abgeglichen
+  (nach dem Speichern hochgeladen, beim App-Start geholt). Haben zwei Geräte denselben Spielstand geändert, bleiben
+  beide erhalten (der vom Server als „… (Cloud Datum)“).
+- **Vom Gerät löschen** lädt vorher offene Spielstände hoch; auf dem Server ändert sich nichts.
+- Vorher prüft die App selbst, ob der Browser das kann. iPad: App über Teilen → **Zum Home-Bildschirm** öffnen,
+  sonst darf Safari die Daten nach einiger Zeit löschen.
 
 Jeder Spieler hat **eigene Spielstände, Backups und DLC-Einstellungen**.
 
@@ -118,9 +133,8 @@ Jeder Spieler hat **eigene Spielstände, Backups und DLC-Einstellungen**.
 
 ## Noch nicht fertig
 
-- **Lokale Kopie der Spieldaten** auf dem iPad mit eigener Verwaltung: folgt nach dem ersten erfolgreichen
-  Spielstart (braucht einen Test, ob Safari die Datei-Anfragen des Spiels über einen Service Worker umleiten lässt).
-  Bis dahin hält der Browser-Cache geladene Daten.
+- **Offline auf dem iPad:** in Chrome geprüft; ob Safari die Datei-Anfragen des Spiels über den Service Worker
+  leitet, zeigt der Selbsttest im Datenmanager (sonst meldet er es und lädt nichts).
 - **iPad-Variante des Builds** (weniger Threads/Speicher), siehe `docs/spikes/S2-ipad-belastung.md`.
 
 ---

@@ -6,6 +6,8 @@ import { loadResults, resetResults, runRemaining, STEPS, type StressResult } fro
 import { overall, runSystemCheck, type CheckItem, type Status } from './systemcheck';
 import { busy, esc, icon, pickFile, toast, when } from './ui';
 import { formatBytes } from './format';
+import { renderDataManager } from './datamanager';
+import { ensureServiceWorker, readState, swCall, syncStatus } from './offline';
 
 type Tab = 'play' | 'saves' | 'data' | 'cheats' | 'admin' | 'system';
 const TABS: { id: Tab; label: string; server: boolean; admin?: boolean }[] = [
@@ -74,13 +76,44 @@ async function renderPlay(v: HTMLElement): Promise<void> {
       <h1>Willkommen zurück${me?.user ? ', ' + esc(me.user) : ''}.</h1>
       <p class="muted">${last ? `Letzter Spielstand: <b>${esc(last.name.replace(/\.fos$/i, ''))}</b> · ${when(last.mtime)}` : 'Noch kein Spielstand – Zeit für ein neues Spiel.'}</p>
       <a class="btn big" href="./game.html">${icon('play')} Spiel starten</a>
-      <p class="hint">Im Spiel oben in der Mitte: ☰ für Cheats und zurück zur App.</p>
+      <div class="row wrap"><span class="muted">Anzeige:</span><div class="seg" id="disp">
+        <button data-d="fullscreen">Vollbild</button><button data-d="window">Fenster</button><button data-d="classic">Mit Leiste</button></div></div>
+      <p class="hint">Menü im Spiel (Cheats, Anzeige, zurück zur App): Taste F8 oder oben in der Mitte tippen.</p>
+      <p class="hint" id="offl"></p>
     </section>
     <div class="grid">
       <div class="card stat"><b>${saves.saves.length}</b><span>Spielstände</span></div>
       <div class="card stat"><b>${on}/${dlc.dlc.length}</b><span>DLCs aktiv</span></div>
       <div class="card stat"><b>${cheatLabel() ? 'An' : 'Aus'}</b><span>Cheats</span></div>
     </div>`;
+  // Anzeige im Spiel (public/addons.js liest fonv.display)
+  const disp = v.querySelector<HTMLElement>('#disp')!;
+  const paintDisp = () => {
+    let d = 'fullscreen';
+    try { d = localStorage.getItem('fonv.display') || d; } catch { /* egal */ }
+    disp.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.classList.toggle('on', b.dataset.d === d));
+  };
+  disp.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    try { localStorage.setItem('fonv.display', b.dataset.d!); } catch { /* egal */ }
+    paintDisp();
+  });
+  paintDisp();
+  // Offline-Daten: Hinweis und Spielstände im Hintergrund abgleichen
+  const state = await readState().catch(() => null);
+  if (state?.enabled) {
+    const offl = v.querySelector('#offl')!;
+    offl.textContent = 'Startet vom Gerät (Datenmanager). Spielstände werden abgeglichen …';
+    void swCall<{ ok: boolean; error?: string }>('sync')
+      .then(async (r) => {
+        const s = await syncStatus();
+        offl.textContent = r.ok
+          ? `Startet vom Gerät. Spielstände abgeglichen${s?.lastSync ? ' ' + when(s.lastSync) : ''}.`
+          : `Startet vom Gerät. Spielstände: ${r.error ?? 'nicht abgeglichen'} – sie bleiben auf dem Gerät und werden später hochgeladen.`;
+      })
+      .catch(() => { offl.textContent = 'Startet vom Gerät.'; });
+  }
 }
 
 // ---- Spielstände + Backups -----------------------------------------------------------------------------
@@ -168,20 +201,17 @@ async function renderData(v: HTMLElement): Promise<void> {
           <label class="switch"><input type="checkbox" data-dlc="${esc(d.name)}" ${d.enabled ? 'checked' : ''}/><span></span></label></li>`)
         .join('')}</ul>` : '<p class="muted">Keine DLCs auf dem Server gefunden.</p>'}
     </section>
-    <section class="card">
-      <h2>Spieldaten auf diesem Gerät</h2>
-      <p class="muted">Die Spieldaten kommen vom Server. Was einmal geladen wurde, hält der Browser im Zwischenspeicher. Eine vollständige Offline-Kopie mit eigener Verwaltung folgt nach dem ersten erfolgreichen Spielstart.</p>
-      <div id="quota" class="muted"></div>
-    </section>`;
+    <div id="dmHost"></div>`;
   v.querySelectorAll<HTMLInputElement>('[data-dlc]').forEach((cb) =>
     cb.addEventListener('change', async () => {
       const ok = await busy(null, () => api.post('dlc', { name: cb.dataset.dlc, enabled: cb.checked }));
       if (ok) toast(`${prettyDlc(cb.dataset.dlc!)}: ${cb.checked ? 'an' : 'aus'}`);
       else cb.checked = !cb.checked;
+      const d = dlc.find((x) => x.name === cb.dataset.dlc);
+      if (ok && d) { d.enabled = cb.checked; void renderDataManager(v.querySelector('#dmHost')!, dlc); }
     }),
   );
-  const est = await navigator.storage?.estimate?.().catch(() => undefined);
-  if (est) view().querySelector('#quota')!.textContent = `Belegt auf diesem Gerät: ${formatBytes(est.usage)} von ${formatBytes(est.quota)}.`;
+  await renderDataManager(v.querySelector('#dmHost')!, dlc);
 }
 
 const DLC_NAMES: Record<string, string> = {
@@ -413,8 +443,13 @@ async function start(): Promise<void> {
   } catch { /* egal */ }
   shell();
   if (me?.mustChangePassword) passwordDialog(true);
-  // Offline-Fähigkeit nur für die Diagnose-Version (GitHub Pages). Auf dem eigenen Server setzt Apache die
-  // Header, und ein Service Worker würde die vielen Spieldaten-Anfragen nur ausbremsen.
+  // Eigener Server: Service Worker nur, wenn der Datenmanager Daten auf dieses Gerät geladen hat (src/offline.ts).
+  if (me && import.meta.env.PROD) {
+    try {
+      if (localStorage.getItem('fonv.offline') === '1') void ensureServiceWorker().catch(() => undefined);
+    } catch { /* egal */ }
+  }
+  // Diagnose-Version (GitHub Pages): Service Worker setzt die COOP/COEP-Header.
   if (!me && 'serviceWorker' in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.register('./sw.js').then(() => {
       if (!crossOriginIsolated && !sessionStorage.getItem('coi-reload')) {

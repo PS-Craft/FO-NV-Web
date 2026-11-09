@@ -87,6 +87,14 @@ input:focus-visible, button:focus-visible, .btn:focus-visible { outline: 2px sol
 .row.wrap { flex-wrap: wrap; }
 .row.end { justify-content: flex-end; }
 .check { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+[hidden] { display: none !important; }
+.meter { height: 10px; border-radius: 5px; background: var(--soft); overflow: hidden; margin: 12px 0 6px; }
+.meter > div { height: 100%; background: var(--accent); transition: width .3s; }
+.badge { font-size: .8rem; padding: 3px 10px; border-radius: 10px; background: var(--soft); color: var(--muted); }
+.badge.ok { background: var(--accent); color: var(--accent-fg); }
+.seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 14px; background: var(--soft); flex-wrap: wrap; }
+.seg button { min-height: 38px; background: transparent; color: var(--fg); font-weight: 500; }
+.seg button.on { background: var(--accent); color: var(--accent-fg); }
 
 /* Schalter */
 .switch { position: relative; width: 52px; height: 32px; flex: none; }
