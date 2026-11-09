@@ -67,6 +67,9 @@ if ($steamGame) {
     Write-Warning 'Fallout New Vegas nicht gefunden. In Steam installieren (und einmal starten), dann Skript erneut ausführen.'
 }
 
+Step '5b/6 vkd3d-compiler (Shader-Werkzeug)'
+& (Join-Path $PSScriptRoot 'vkd3d-prepare.ps1')
+
 Step '6/6 Prüfung'
 $checks = [ordered]@{
     'git'               = Have git
