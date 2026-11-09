@@ -7,7 +7,7 @@ import { overall, runSystemCheck, type CheckItem, type Status } from './systemch
 import { busy, esc, icon, pickFile, toast, when } from './ui';
 import { formatBytes } from './format';
 import { renderDataManager } from './datamanager';
-import { ensureServiceWorker, readState, swCall, syncStatus } from './offline';
+import { ensureServiceWorker, readState, refreshAppCache, swCall, syncStatus } from './offline';
 
 type Tab = 'play' | 'saves' | 'data' | 'cheats' | 'admin' | 'system';
 const TABS: { id: Tab; label: string; server: boolean; admin?: boolean }[] = [
@@ -446,7 +446,13 @@ async function start(): Promise<void> {
   // Eigener Server: Service Worker nur, wenn der Datenmanager Daten auf dieses Gerät geladen hat (src/offline.ts).
   if (me && import.meta.env.PROD) {
     try {
-      if (localStorage.getItem('fonv.offline') === '1') void ensureServiceWorker().catch(() => undefined);
+      if (localStorage.getItem('fonv.offline') === '1') {
+        // mit Netz: App-Dateien auf dem Gerät aktuell halten (sonst liefe offline eine alte Fassung)
+        void ensureServiceWorker()
+          .then(() => (navigator.onLine ? refreshAppCache() : false))
+          .then((updated) => { if (updated) toast('Offline-Kopie der App aktualisiert'); })
+          .catch(() => undefined);
+      }
     } catch { /* egal */ }
   }
   // Diagnose-Version (GitHub Pages): Service Worker setzt die COOP/COEP-Header.

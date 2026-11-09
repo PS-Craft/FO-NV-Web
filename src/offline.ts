@@ -194,6 +194,16 @@ async function cacheApp(state: OfflineState, report: (p: Progress) => void): Pro
   await saveState(state);
 }
 
+/** App-Dateien auf dem Gerät auf den Stand des Servers bringen (nach einem Update), im Hintergrund beim App-Start. */
+export async function refreshAppCache(): Promise<boolean> {
+  if (running) return false;
+  const state = await readState();
+  if (!state.enabled) return false;
+  const before = state.app;
+  await cacheApp(state, () => undefined);
+  return state.app !== before;
+}
+
 export function startDownload(quality: Quality, dlcOff: string[], report: (p: Progress) => void): Promise<void> {
   if (running) return running;
   running = (async () => {

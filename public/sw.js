@@ -104,17 +104,21 @@ self.addEventListener('fetch', (e) => {
   const fs = url.pathname.match(/\/fs\/([a-z]+)$/);
   if (fs) {
     const t0 = Date.now();
-    return e.respondWith(fsRequest(e, fs[1], url).then((res) => {
-      trace.push([new Date().toISOString().slice(11, 23), fs[1], url.searchParams.get('p'), url.searchParams.get('o'), res.status, Date.now() - t0]);
-      if (trace.length > 300) trace.splice(0, 100);
-      return res;
-    }));
+    const entry = [new Date().toISOString().slice(11, 23), fs[1], url.searchParams.get('p'), url.searchParams.get('o'), 'offen', 0];
+    trace.push(entry);
+    if (trace.length > 3000) trace.splice(0, 1000);
+    const done = (status) => { entry[4] = status; entry[5] = Date.now() - t0; };
+    return e.respondWith(fsRequest(e, fs[1], url).then((res) => { done(res.status); return res; }, (err) => { done('Fehler ' + err); throw err; }));
   }
   if (/\/api\//.test(url.pathname)) return e.respondWith(apiRequest(req));
   if (req.method !== 'GET' || /\.php$/.test(url.pathname)) return;
   // Seitenaufrufe mit Netz nicht anfassen: nur so fragt der Browser nach Name und Passwort (Verzeichnisschutz)
   if (req.mode === 'navigate' && self.navigator.onLine) return;
-  e.respondWith(appRequest(req, url));
+  const t0 = Date.now();
+  const entry = [new Date().toISOString().slice(11, 23), 'app', url.pathname, '', 'offen', 0];
+  trace.push(entry);
+  if (trace.length > 3000) trace.splice(0, 1000);
+  e.respondWith(appRequest(req, url).then((res) => { entry[4] = res.status; entry[5] = Date.now() - t0; return res; }));
 });
 
 async function fsRequest(e, op, url) {
@@ -171,8 +175,9 @@ async function appRequest(req, url) {
   await ready;
   if (!st.enabled) return fetch(req);
   const cache = await caches.open(APP_CACHE);
-  const key = url.pathname.endsWith('/') ? new URL('index.html', url).href : url.href;
-  const lookup = () => cache.match(key, { ignoreSearch: true });
+  // genau nachschlagen (ohne ?…): ignoreSearch durchsucht den ganzen Cache – bei Tausenden Shadern auf einmal Minuten
+  const key = new URL(url.pathname.endsWith('/') ? url.pathname + 'index.html' : url.pathname, url.origin).href;
+  const lookup = () => cache.match(key);
   // Dateien mit Prüfsumme im Namen ändern sich nie: direkt vom Gerät
   if (/\/(shader\/[0-9a-f]{40}|assets\/)/.test(url.pathname)) {
     const hit = await lookup();
@@ -182,6 +187,12 @@ async function appRequest(req, url) {
     const res = await fetch(req);
     // Server da, aber Anmeldung abgelaufen o. Ä.: lieber die Fassung vom Gerät (die Seite meldet sich dann selbst)
     if (res.status >= 500 || (req.mode === 'navigate' && !res.ok)) return (await lookup()) || res;
+    // frische Fassung auch fürs Gerät merken, damit die Offline-Kopie nicht veraltet
+    if (res.ok && res.type === 'basic' && !req.headers.has('range')) {
+      const old = await lookup();
+      const same = old && ['last-modified', 'etag', 'content-length'].every((h) => old.headers.get(h) === res.headers.get(h));
+      if (!same) await cache.put(key, res.clone()).catch(() => undefined);
+    }
     return res;
   } catch {
     return (await lookup()) || fail(503, 'Offline und nicht auf diesem Gerät gespeichert');
@@ -384,10 +395,17 @@ async function flushNow() {
 }
 
 // ---- Abgleich mit dem Server ("Cloud") ----------------------------------------------------------------------
-let syncTimer = 0, syncing = null, lastResult = null, pendingSync = null;
+let syncTimer = 0, syncing = null, lastResult = null, pendingSync = null, syncResolve = null;
+// ein Abgleich kurz nach der letzten Änderung; alle Wartenden bekommen dasselbe Versprechen (keins bleibt offen,
+// sonst gälte der Worker für immer als beschäftigt und eine neue Fassung käme nie an die Reihe)
 function syncSoon(ms) {
   clearTimeout(syncTimer);
-  pendingSync = new Promise((res) => { syncTimer = setTimeout(() => runSync().then(res, res), ms); });
+  if (!pendingSync) pendingSync = new Promise((res) => { syncResolve = res; });
+  syncTimer = setTimeout(() => {
+    const res = syncResolve;
+    pendingSync = syncResolve = null;
+    runSync().then(res, res);
+  }, ms);
   return pendingSync;
 }
 function runSync() {
