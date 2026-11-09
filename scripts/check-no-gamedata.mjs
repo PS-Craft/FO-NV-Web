@@ -1,7 +1,7 @@
 // Bricht ab, falls Spieldaten ins Repository geraten sind (siehe docs/RECHT.md).
 import { execSync } from 'node:child_process';
 
-const forbidden = /\.(esm|esp|bsa|nif|kf|dds|lip|egm|egt|tri|fos|ogg|mp3|wav|bik)$/i;
+const forbidden = /\.(esm|esp|bsa|nif|kf|dds|lip|egm|egt|tri|fos|ogg|mp3|wav|bik|wasm|sdp)$|(^|\/)(fs-config\.php|\.htpasswd)$/i;
 const files = execSync('git ls-files', { encoding: 'utf8' }).split('\n').filter(Boolean);
 const hits = files.filter((f) => forbidden.test(f));
 if (hits.length) {

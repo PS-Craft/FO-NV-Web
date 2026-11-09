@@ -2,20 +2,16 @@
 
 ## Beantwortet
 
-- ✅ **Hosting:** alles auf GitHub (Code, CI, GitHub Pages). Kein Weblaufwerk.
-- ✅ **Rollen:** Claude ist Hauptentwickler; Projektinhaber testet auf dem iPad und entscheidet.
+- ✅ **Spiel:** New Vegas bei Steam gekauft (Fallout 3 wird nicht genutzt).
+- ✅ **Hosting:** eigenes, sicheres Weblaufwerk (PHP-Webspace), passwortgeschützt, auch unterwegs.
+- ✅ **Entwicklung:** auf GitHub; Claude ist Hauptentwickler.
+- ✅ **Steuerung:** Touch muss gehen (Tastatur nicht immer dabei).
+- ✅ **Anspruch:** Es muss am Ende vollständig und gut laufen.
 
-## Noch offen (blockiert M1/M2)
+## Noch offen
 
-1. **Weg bestätigen:** A (eigene Web-Engine, Empfehlung), zusätzlich B (Streaming als
-   Sofortlösung) gewünscht? Oder C (originales Spiel im Stil)?
-2. **Besitzt du New Vegas auf dem PC** (Steam/GOG/Epic, mit DLCs)? Ohne eigene Daten lässt sich
-   Weg A nicht testen – ich entwickle gegen selbst erzeugte Testdateien, aber die echte Prüfung
-   machst du auf deinem iPad.
-3. **iPad-Systemcheck:** Bitte die App auf dem iPad öffnen, zum Home-Bildschirm hinzufügen,
-   „Systemcheck starten" → „Ergebnis kopieren" und mir das JSON schicken.
-4. **Steuerung:** hauptsächlich Touch, Controller oder Tastatur/Trackpad?
-5. **Ziel-Umfang:** Reicht zunächst der „Mojave-Explorer" (M5), oder ist volles Gameplay Pflicht?
-6. **Repo öffentlich oder privat?** GitHub Pages aus privatem Repo braucht je nach Plan ein
-   kostenpflichtiges Konto. Bei öffentlich: neutraler Projektname empfohlen (siehe [RECHT.md](RECHT.md)).
-7. **Lizenz** für den Engine-Code: MIT (frei) oder GPL-3 (erlaubt Übernahme von OpenMW-Code)?
+1. **Schnelltest:** Läuft falloutnewvegasweb.com (Low, Quick Start) auf deinem iPad? → [ANLEITUNG.md](ANLEITUNG.md), Schritt 0
+2. **Welches iPad** (Modell, iPadOS-Version)?
+3. **Welcher Webspace genau** (Anbieter/Tarif)? Gibt es SSH/SFTP? Wie viel Speicher ist frei (~12 GB nötig)?
+4. **PC per Remote Control verbinden?** Dann richte ich den Build selbst ein ([ANLEITUNG.md](ANLEITUNG.md), Abschnitt „PC mit Claude verbinden“).
+5. **DLCs** mitnehmen (Dead Money, Honest Hearts, Old World Blues, Lonesome Road, …)?

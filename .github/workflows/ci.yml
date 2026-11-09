@@ -27,6 +27,8 @@ jobs:
       - run: npm ci
       - name: Keine Spieldaten im Repo
         run: npm run check:no-gamedata
+      - name: PHP für Server-Tests
+        run: php -v
       - run: npm test
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3

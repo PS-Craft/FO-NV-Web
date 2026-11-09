@@ -1,14 +1,32 @@
 # Gesamtplan: FO-NV-Web
 
-> Status: **v0.2** – M0 (Fundament) umgesetzt, M1 (iPad-Spikes) startet. Offene Punkte: [FRAGEN.md](FRAGEN.md)
+> Status: **v0.3** – Neuer Hauptweg: privates Self-Hosting von *fnv-web-recomp* auf dem eigenen
+> Weblaufwerk. **Umsetzung: [ANLEITUNG.md](ANLEITUNG.md).** Offene Punkte: [FRAGEN.md](FRAGEN.md)
+
+## ⭐ Aktueller Hauptweg (ab v0.3)
+
+Es gibt inzwischen das Open-Source-Projekt **SgtMetz/fnv-web-recomp** (MIT): Es übersetzt die
+`FalloutNV.exe` des Spielers statisch nach WebAssembly + WebGPU und spielt mit dessen eigenen
+Spieldateien – das volle Originalspiel, keine Nachprogrammierung. Darauf bauen wir auf:
+
+- Der Projektinhaber besitzt New Vegas (Steam). Der **Build-PC** baut daraus die Browser-Version.
+- Gehostet wird **privat, passwortgeschützt** auf dem eigenen **Weblaufwerk** (PHP-Webspace, all-inkl-artig).
+  Weil dort kein Node läuft, ersetzt `hosting/fs.php` den Original-Server (getestet).
+- **GitHub** enthält Skripte, Server-Code, Tests, Doku und CI – nie Spiel- oder Build-Dateien.
+- iPad: Touch-Steuerung und verkleinerte Archive bringt das Projekt mit; ob Safari die Engine
+  vollständig trägt, prüft [ANLEITUNG.md](ANLEITUNG.md), Schritt 0.
+
+Der unten beschriebene **Weg A** (eigene Engine) ist damit nur noch Rückfallebene.
 
 ## Festgelegte Entscheidungen
 
 | Datum | Entscheidung |
 |---|---|
-| 2026-11-09 | **Alles läuft auf GitHub:** Code, Issues/Planung, CI (GitHub Actions) und Auslieferung (GitHub Pages). Kein separates Weblaufwerk. |
+| 2026-11-09 | Projektinhaber besitzt **New Vegas (Steam)**. Hauptweg: privates Self-Hosting von fnv-web-recomp. |
+| 2026-11-09 | Hosting auf dem **eigenen Weblaufwerk** (PHP), passwortgeschützt, auch unterwegs. Entwicklung, Doku und CI auf **GitHub**. Spieldaten und Build nie auf GitHub. |
+| 2026-11-09 | **Touch-Steuerung** ist Pflicht (iPad ohne Tastatur). |
 | 2026-11-09 | **Claude ist Hauptentwickler** und verantwortet Architektur, Code, Tests, Doku und Deploy. Der Projektinhaber testet auf dem iPad und trifft Produktentscheidungen. |
-| 2026-11-09 | Vorläufig **Weg A** (eigene Web-Engine). Wird nach M1 (Go/No-Go) bestätigt. |
+| 2026-11-09 | ~~Vorläufig Weg A (eigene Web-Engine)~~ → ersetzt durch den Hauptweg oben. |
 
 ## 1. Ziel
 

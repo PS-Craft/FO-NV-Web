@@ -1,16 +1,21 @@
 # FO-NV-Web
 
-Plan für eine browserbasierte, **iPad-taugliche** Engine, die *Fallout: New Vegas* mit den
-**eigenen, legal erworbenen Spieldaten** des Nutzers abspielt – komplett auf GitHub entwickelt und
-über GitHub Pages ausgeliefert.
+Privates Self-Hosting von *Fallout: New Vegas* im Browser – **iPad-tauglich, mit Touch-Steuerung,
+passwortgeschützt, auch unterwegs** – auf Basis von [fnv-web-recomp](https://github.com/SgtMetz/fnv-web-recomp)
+und der **eigenen Steam-Kopie**. Gehostet auf dem eigenen PHP-Weblaufwerk.
+
+👉 **Los geht's: [docs/ANLEITUNG.md](docs/ANLEITUNG.md)**
 
 > ⚠️ Dieses Repository enthält und verteilt **keine** Spieldaten. Nicht mit Bethesda Softworks
 > oder Microsoft verbunden.
 
 ## Status
 
-Meilenstein **M0 (Fundament)** steht: installierbare Web-App mit iPad-Systemcheck.
-Nächster Schritt: **M1** – Machbarkeitstests auf echtem iPad.
+- ✅ `hosting/`: PHP-Ersatz für den Node-Server (Spieldateien, Spielstände) + `.htaccess` (Passwort,
+  COOP/COEP, vorkomprimierte Dateien, Caching) – getestet mit PHP und Apache
+- ✅ `pc/`: Setup- und Build-Skripte für den Windows-PC (noch nicht auf echtem PC getestet)
+- ⏳ iPad-Schnelltest, PC-Einrichtung, erster echter Durchlauf
+- 🧰 `src/`: iPad-Systemcheck (Web-App), Tests
 
 ## Entwicklung
 
@@ -29,6 +34,7 @@ Einstieg: **[docs/PLAN.md](docs/PLAN.md)**
 
 | Dokument | Inhalt |
 |---|---|
+| [ANLEITUNG.md](docs/ANLEITUNG.md) | **Schritt-für-Schritt: Weblaufwerk, PC-Build, iPad** |
 | [PLAN.md](docs/PLAN.md) | Gesamtplan, Lösungswege, Architektur, Risiken |
 | [ROADMAP.md](docs/ROADMAP.md) | Meilensteine M0–M12 mit Aufgaben & Abnahmekriterien |
 | [IPAD.md](docs/IPAD.md) | iPad/Safari: Speicher, Import, Grafik, Audio, Steuerung |

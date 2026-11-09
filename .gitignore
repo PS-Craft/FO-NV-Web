@@ -24,3 +24,10 @@ coverage/
 playwright-report/
 test-results/
 .DS_Store
+
+# Build-Ergebnisse aus der eigenen Spielkopie – niemals committen
+out/
+upload/
+*.wasm
+hosting/fs-config.php
+.htpasswd
