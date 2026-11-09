@@ -43,6 +43,7 @@ $lines += "synchronize remote -criteria=size `"$Up\www`" `"$web`""
 $lines += "synchronize remote -criteria=size `"$Up\fnv-mobile`" `"$base/fnv-mobile`""
 if ($GameFiles) {
     $lines += "put `"$env:FNV_GAME\FalloutNV.exe`" `"$base/fnv-game/`""
+    $lines += "mkdir `"$base/fnv-game/Data`""
     $lines += "synchronize remote -criteria=size `"$env:FNV_GAME\Data`" `"$base/fnv-game/Data`""
 }
 $lines += 'exit'
