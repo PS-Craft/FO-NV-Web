@@ -34,10 +34,10 @@ describe.skipIf(!HAS_PHP)('hosting/api.php', () => {
     const r = await fetch(`${BASE}/api/${route}`, {
       method: post ? 'POST' : 'GET',
       headers,
-      body: raw !== undefined ? raw : body !== undefined ? JSON.stringify(body) : undefined,
+      body: (raw !== undefined ? (typeof raw === 'string' ? raw : new Uint8Array(raw)) : body !== undefined ? JSON.stringify(body) : undefined) as BodyInit | undefined,
     });
     const type = r.headers.get('content-type') || '';
-    return { status: r.status, json: type.includes('json') ? await r.json() : null, buf: Buffer.from(type.includes('json') ? [] : await r.arrayBuffer()), headers: r.headers };
+    return { status: r.status, json: type.includes('json') ? await r.json() : null, buf: type.includes('json') ? Buffer.alloc(0) : Buffer.from(new Uint8Array(await r.arrayBuffer())), headers: r.headers };
   };
   const fsCall = (user: [string, string], url: string, init: RequestInit = {}) =>
     fetch(BASE + url, { ...init, headers: { authorization: auth(...user) } });
