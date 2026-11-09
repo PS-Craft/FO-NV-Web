@@ -33,7 +33,7 @@ async function startServer(dlc: boolean, port: number) {
   // eigenes Docroot je Server, damit sich die Konfigurationen nicht stören
   const root = path.join(tmp, 'www');
   fs.mkdirSync(root);
-  for (const f of ['fs.php', 'dev-router.php']) fs.copyFileSync(path.join(HOSTING, f), path.join(root, f));
+  for (const f of ['fs.php', 'lib.php', 'api.php', 'dev-router.php'].filter((f) => fs.existsSync(path.join(HOSTING, f)))) fs.copyFileSync(path.join(HOSTING, f), path.join(root, f));
   const cfg = { game, data: path.join(tmp, 'docs'), mobile, cache: path.join(tmp, 'cache'), dlc };
   fs.writeFileSync(
     path.join(root, 'fs-config.php'),
