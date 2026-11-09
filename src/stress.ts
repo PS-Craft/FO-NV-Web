@@ -159,6 +159,53 @@ export const STEPS: StressStep[] = [
       return `übersetzt in ${s(ms)}, fertig nach ${s(await spawnWorkers(16, module, memory, 10000))}`;
     },
   },
+  // --- Runde 3: hot16 ist auf dem iPad abgestürzt – welcher Teil ist schuld? (vom harmlosesten zum riskantesten) ---
+  ...[1, 1.5, 2].map((gb) => ({
+    id: `touch${gb * 10}`,
+    label: `Nur Speicher: ${String(gb).replace('.', ',')} GB wirklich belegen (ohne Code)`,
+    run: async () => {
+      const m = sharedMemory(3);
+      touch(m, gb * 1024 * MB);
+      return `${gb} GB belegt ok`;
+    },
+  })),
+  ...([
+    ['hotA', 1, 0],
+    ['hotB', 4, 0],
+    ['hotC', 16, 0],
+  ] as const).map(([id, n, gb]) => ({
+    id,
+    label: `Nur Code: 100 MB mit 8 Riesenfunktionen, ${n} Thread${n > 1 ? 's' : ''} rechnen 10 s (kein Speicher belegt)`,
+    run: async (log: (s: string) => void) => {
+      const memory = sharedMemory(0.25);
+      touch(memory, gb * MB);
+      const { module, ms } = await compile(100, 0.25, log, [4, 4, 2, 2, 1, 1, 1, 1]);
+      log(`übersetzt in ${s(ms)}, ${n} Threads rechnen …`);
+      return `fertig nach ${s(await spawnWorkers(n, module, memory, 10000))}`;
+    },
+  })),
+  {
+    id: 'hotD',
+    label: 'Ohne Riesenfunktionen: 100 MB kleine Funktionen, 16 Threads rechnen 10 s, 1 GB belegt',
+    run: async (log) => {
+      const memory = sharedMemory(2);
+      touch(memory, 1024 * MB);
+      const { module, ms } = await compile(100, 2, log);
+      log(`übersetzt in ${s(ms)}, 16 Threads rechnen …`);
+      return `fertig nach ${s(await spawnWorkers(16, module, memory, 10000))}`;
+    },
+  },
+  {
+    id: 'hotE',
+    label: 'Riesenfunktionen + 4 Threads + 1 GB belegt',
+    run: async (log) => {
+      const memory = sharedMemory(2);
+      touch(memory, 1024 * MB);
+      const { module, ms } = await compile(100, 2, log, [4, 4, 2, 2, 1, 1, 1, 1]);
+      log(`übersetzt in ${s(ms)}, 4 Threads rechnen …`);
+      return `fertig nach ${s(await spawnWorkers(4, module, memory, 10000))}`;
+    },
+  },
   {
     id: 'hot64',
     label: 'Heiß wie das Spiel: 3 GB (1,5 GB belegt) + 100 MB mit 8 Riesenfunktionen + 64 Threads rechnen 10 s',

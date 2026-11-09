@@ -11,8 +11,9 @@ self.onmessage = async (e: MessageEvent<{ module: WebAssembly.Module; memory: We
     const giants = Object.keys(ex).filter((k) => /^g\d+$/.test(k));
     let calls = 0;
     const end = performance.now() + hotMs;
-    while (giants.length && performance.now() < end) {
-      for (const g of giants) ex[g]!((id * 8192 + calls * 64) % (1 << 20), calls);
+    while (performance.now() < end) {
+      if (giants.length) for (const g of giants) ex[g]!((id * 8192 + calls * 64) % (1 << 20), calls);
+      else ex.run!((id * 8192 + calls * 64) % (1 << 20), calls);   // ohne Riesenfunktionen: die kleinen heiß laufen lassen
       calls++;
     }
     (self as unknown as Worker).postMessage({ ok: true, ms: performance.now() - t, calls });
