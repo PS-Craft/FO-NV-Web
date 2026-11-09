@@ -25,7 +25,7 @@ Push auf `main` → GitHub Actions baut und veröffentlicht automatisch auf GitH
 
 ## Dokumentation
 
- Einstieg: **[docs/PLAN.md](docs/PLAN.md)**
+Einstieg: **[docs/PLAN.md](docs/PLAN.md)**
 
 | Dokument | Inhalt |
 |---|---|
