@@ -1,0 +1,33 @@
+# Niemals Spieldaten committen (siehe docs/RECHT.md)
+*.esm
+*.esp
+*.bsa
+*.nif
+*.kf
+*.dds
+*.lip
+*.egm
+*.egt
+*.tri
+*.fos
+*.ogg
+*.mp3
+*.wav
+*.bik
+Data/
+
+# Build / Tooling
+node_modules/
+dist/
+.vite/
+coverage/
+playwright-report/
+test-results/
+.DS_Store
+
+# Build-Ergebnisse aus der eigenen Spielkopie – niemals committen
+out/
+upload/
+*.wasm
+hosting/fs-config.php
+.htpasswd

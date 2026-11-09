@@ -1,0 +1,90 @@
+# ---------------------------------------------------------------------------------------------------
+# FO-NV-Web – privates Hosting der Browser-Version auf Apache-Webspace (z. B. all-inkl).
+# Auf dem Server als ".htaccess" in den Ordner der (Sub-)Domain legen, zusammen mit fs.php,
+# fs-config.php und dem Inhalt von out/dist. Anleitung: docs/ANLEITUNG.md
+# ---------------------------------------------------------------------------------------------------
+
+Options -Indexes
+DirectoryIndex index.html
+
+# ---- Passwortschutz ---------------------------------------------------------------------------------
+# Variante A (empfohlen bei all-inkl): im KAS unter "Tools -> Verzeichnisschutz" für diesen Ordner
+#   einrichten. Das KAS ergänzt die nötigen Zeilen selbst – diesen Block dann auskommentiert lassen.
+# Variante B: .htpasswd selbst anlegen (siehe Anleitung) und die drei Zeilen aktivieren:
+#AuthType Basic
+#AuthName "Privat"
+#AuthUserFile /ABSOLUTER/PFAD/ZUR/.htpasswd
+#Require valid-user
+
+# ---- Header für SharedArrayBuffer (WASM-Threads) ------------------------------------------------------
+SetEnvIf Request_URI "." FNV_APACHE_HEADERS=1
+<IfModule mod_headers.c>
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header always set Cross-Origin-Embedder-Policy "require-corp"
+  Header always set Cross-Origin-Resource-Policy "same-origin"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Robots-Tag "noindex, nofollow"
+</IfModule>
+
+# ---- Dateitypen und vorkomprimierte Varianten (.br/.gz) ------------------------------------------------
+<IfModule mod_mime.c>
+  RemoveLanguage .br
+  RemoveType .gz .br
+  AddEncoding br .br
+  AddEncoding gzip .gz
+  AddType application/wasm .wasm
+  AddType text/javascript .js .mjs
+  AddType application/json .json
+</IfModule>
+<FilesMatch "\.wasm(\.(br|gz))?$">
+  ForceType application/wasm
+</FilesMatch>
+<FilesMatch "\.m?js(\.(br|gz))?$">
+  ForceType text/javascript
+</FilesMatch>
+<FilesMatch "\.html(\.(br|gz))?$">
+  ForceType "text/html; charset=utf-8"
+</FilesMatch>
+<FilesMatch "^[0-9a-f]{40}(\.gz)?$">
+  ForceType application/json
+</FilesMatch>
+
+# nichts doppelt komprimieren: Spielblöcke (fs.php) und schon komprimierte Dateien
+SetEnvIfNoCase Request_URI "^/fs(/|\.php)" no-gzip=1
+SetEnvIfNoCase Request_URI "\.(br|gz)$" no-gzip=1
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # interne Dateien nie ausliefern
+  RewriteRule ^(fs-config\.php|dev-router\.php|fnv-data/|fnv-cache/) - [F,L]
+
+  # Datei-API des Spiels
+  RewriteRule ^fs/([a-z]+)$ fs.php?op=$1 [QSA,L]
+
+  # Problemberichte nimmt dieser Server nicht an (die Seite bietet sie dann zum Download an)
+  RewriteRule ^report$ - [R=404,L]
+
+  # vorkomprimierte Varianten, wenn der Browser sie annimmt
+  RewriteCond %{HTTP:Accept-Encoding} br
+  RewriteCond %{REQUEST_FILENAME}.br -f
+  RewriteRule ^(.+)$ $1.br [L]
+  RewriteCond %{HTTP:Accept-Encoding} gzip
+  RewriteCond %{REQUEST_FILENAME}.gz -f
+  RewriteRule ^(.+)$ $1.gz [L]
+</IfModule>
+
+# ---- Caching ------------------------------------------------------------------------------------------
+# Seite und Build: immer kurz nachfragen (ETag/304); Shader sind nach ihrem Inhalt benannt -> für immer.
+# fs.php setzt seine eigenen Cache-Header.
+<IfModule mod_headers.c>
+  <If "%{REQUEST_URI} =~ m#^/shader/#">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </If>
+  <ElseIf "%{REQUEST_URI} !~ m#^/fs(/|\.php)#">
+    Header set Cache-Control "no-cache"
+  </ElseIf>
+  <FilesMatch "\.(br|gz)$">
+    Header append Vary Accept-Encoding
+  </FilesMatch>
+</IfModule>
