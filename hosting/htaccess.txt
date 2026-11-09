@@ -56,7 +56,7 @@ SetEnvIfNoCase Request_URI "\.(br|gz)$" no-gzip=1
   RewriteEngine On
 
   # interne Dateien nie ausliefern
-  RewriteRule ^(fs-config\.php|lib\.php|dev-router\.php|fnv-data/|fnv-cache/|fnv-private/) - [F,L]
+  RewriteRule ^(fs-config\.php|lib\.php|dev-router\.php|fnv-(data|cache|private|game|mobile)(/|$)|www/|upload/) - [F,L]
 
   # Datei-API des Spiels
   RewriteRule ^fs/([a-z]+)$ fs.php?op=$1 [QSA,L]
