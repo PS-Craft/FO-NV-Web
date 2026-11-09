@@ -22,10 +22,11 @@ const flag = (n) => args.includes(n);
 const recomp = opt('--recomp');
 const appDist = path.resolve(opt('--app', path.join(REPO, 'dist')));
 const out = path.resolve(opt('--out', 'upload'));
-const base = (opt('--remote-base') || '').replace(/\/+$/, '');
+const rawBase = opt('--remote-base') || '';
+const base = rawBase.replace(/\/+$/, '');
 if (!recomp || !fs.existsSync(path.join(recomp, 'index.html'))) fail('--recomp <Ordner mit index.html von recomp_bundle.py> fehlt');
 if (!fs.existsSync(path.join(appDist, 'index.html'))) fail(`App-Build fehlt (${appDist}): erst "npm run build"`);
-if (!base.startsWith('/')) fail('--remote-base <absoluter Pfad des Webspace, z. B. /www/htdocs/w0123456> fehlt');
+if (!rawBase.startsWith('/')) fail('--remote-base <absoluter Pfad des Webspace, z. B. /www/htdocs/w0123456> fehlt');
 
 const www = path.join(out, 'www');
 fs.rmSync(out, { recursive: true, force: true });
