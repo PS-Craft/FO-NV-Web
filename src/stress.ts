@@ -52,16 +52,16 @@ function touch(mem: WebAssembly.Memory, bytes: number): void {
   for (let i = 0; i < n; i += 4096) u8[i] = 1;
 }
 
-async function compile(mb: number, memGb: number, log: (s: string) => void) {
+async function compile(mb: number, memGb: number, log: (s: string) => void, giantsMb: number[] = []) {
   let t = performance.now();
-  const bytes = makeModule(mb * MB, Math.round(memGb * PAGES_PER_GB));
+  const bytes = makeModule(mb * MB, Math.round(memGb * PAGES_PER_GB), giantsMb.map((g) => g * MB));
   log(`Modul erzeugt: ${(bytes.length / MB).toFixed(0)} MB in ${((performance.now() - t) / 1000).toFixed(1)} s`);
   t = performance.now();
   const module = await WebAssembly.compile(bytes as Uint8Array<ArrayBuffer>);
   return { module, ms: performance.now() - t };
 }
 
-async function spawnWorkers(n: number, module: WebAssembly.Module, memory: WebAssembly.Memory): Promise<number> {
+async function spawnWorkers(n: number, module: WebAssembly.Module, memory: WebAssembly.Memory, hotMs = 0): Promise<number> {
   const t = performance.now();
   const workers: Worker[] = [];
   try {
@@ -69,7 +69,7 @@ async function spawnWorkers(n: number, module: WebAssembly.Module, memory: WebAs
       const w = new Worker(new URL('./stress-worker.ts', import.meta.url), { type: 'module' });
       workers.push(w);
       return new Promise<void>((ok, fail) => {
-        const timer = setTimeout(() => fail(new Error(`Thread ${id}: keine Antwort nach 120 s`)), 120000);
+        const timer = setTimeout(() => fail(new Error(`Thread ${id}: keine Antwort nach 180 s`)), 180000 + hotMs);
         w.onmessage = (e) => {
           clearTimeout(timer);
           if (e.data.ok) ok();
@@ -79,7 +79,7 @@ async function spawnWorkers(n: number, module: WebAssembly.Module, memory: WebAs
           clearTimeout(timer);
           fail(new Error(`Thread ${id}: ${e.message || 'Fehler'}`));
         };
-        w.postMessage({ module, memory, id });
+        w.postMessage({ module, memory, id, hotMs });
       });
     });
     await Promise.all(done);
@@ -135,6 +135,39 @@ export const STEPS: StressStep[] = [
       const { module, ms } = await compile(100, 2, log);
       log(`übersetzt in ${s(ms)}, starte Threads …`);
       return `übersetzt in ${s(ms)}, 16 Threads bereit nach ${s(await spawnWorkers(16, module, memory))}`;
+    },
+  },
+  // --- Runde 2: näher am echten Programm (riesige Funktionen, heißer Code auf vielen Threads) ---
+  ...[1, 4, 7].map((g) => ({
+    id: `giant${g}`,
+    label: `Eine riesige Funktion mit ${g} MB übersetzen und heißlaufen lassen`,
+    run: async (log: (s: string) => void) => {
+      const memory = sharedMemory(0.25);
+      const { module, ms } = await compile(g + 1, 0.25, log, [g]);
+      log(`übersetzt in ${s(ms)}, lasse sie 5 s laufen …`);
+      return `übersetzt in ${s(ms)}, heiß gelaufen nach ${s(await spawnWorkers(1, module, memory, 5000))}`;
+    },
+  })),
+  {
+    id: 'hot16',
+    label: 'Heiß: 2 GB (1 GB belegt) + 100 MB mit 8 Riesenfunktionen + 16 Threads rechnen 10 s',
+    run: async (log) => {
+      const memory = sharedMemory(2);
+      touch(memory, 1024 * MB);
+      const { module, ms } = await compile(100, 2, log, [4, 4, 2, 2, 1, 1, 1, 1]);
+      log(`übersetzt in ${s(ms)}, 16 Threads rechnen …`);
+      return `übersetzt in ${s(ms)}, fertig nach ${s(await spawnWorkers(16, module, memory, 10000))}`;
+    },
+  },
+  {
+    id: 'hot64',
+    label: 'Heiß wie das Spiel: 3 GB (1,5 GB belegt) + 100 MB mit 8 Riesenfunktionen + 64 Threads rechnen 10 s',
+    run: async (log) => {
+      const memory = sharedMemory(3);
+      touch(memory, 1536 * MB);
+      const { module, ms } = await compile(100, 3, log, [4, 4, 2, 2, 1, 1, 1, 1]);
+      log(`übersetzt in ${s(ms)}, 64 Threads rechnen …`);
+      return `übersetzt in ${s(ms)}, fertig nach ${s(await spawnWorkers(64, module, memory, 10000))}`;
     },
   },
 ];
