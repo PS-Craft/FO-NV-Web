@@ -53,7 +53,7 @@ for (const f of fs.readdirSync(appDist)) {
 }
 
 // 3) Server-Dateien
-for (const f of ['fs.php', 'api.php', 'lib.php']) fs.copyFileSync(path.join(REPO, 'hosting', f), path.join(www, f));
+for (const f of ['fs.php', 'api.php', 'lib.php', 'check.php']) fs.copyFileSync(path.join(REPO, 'hosting', f), path.join(www, f));
 const priv = `${base}/fnv-private`;
 fs.writeFileSync(path.join(www, '.htaccess'),
   fs.readFileSync(path.join(REPO, 'hosting', 'htaccess.txt'), 'utf8').replace('__HTPASSWD__', `${priv}/.htpasswd`));

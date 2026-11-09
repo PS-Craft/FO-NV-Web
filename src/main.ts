@@ -390,7 +390,18 @@ function renderSystem(v: HTMLElement): void {
 
 // ---- Start ---------------------------------------------------------------------------------------------
 async function start(): Promise<void> {
-  me = await detectServer();
+  const found = await detectServer();
+  if (found && 'status' in found) {
+    // eigener Server, aber die PHP-Schnittstelle antwortet nicht richtig: klar sagen statt Diagnose-Seite
+    app.innerHTML = `<main class="center"><div class="card error" style="max-width:640px">
+      <h2>Der Server antwortet nicht richtig</h2>
+      <p>Die App-Schnittstelle (<code>/api/me</code>) lieferte ${found.status ? 'Status ' + found.status : 'keine Antwort'}.
+      Häufigste Ursache: zu alte <b>PHP-Version</b> (nötig: 8.0 oder neuer).</p>
+      <p><a class="btn" href="./check.php">Server-Check öffnen</a></p>
+      ${found.text ? `<p class="muted"><small>${esc(found.text)}</small></p>` : ''}</div></main>`;
+    return;
+  }
+  me = found;
   if (me && !me.user) {
     // Server erreichbar, aber (noch) nicht angemeldet: Seite neu laden lässt Safari nach dem Passwort fragen
     app.innerHTML = '<main class="center"><div class="card"><h2>Bitte anmelden</h2><p class="muted">Lade die Seite neu und gib Name und Passwort ein.</p><button onclick="location.reload()">Neu laden</button></div></main>';
