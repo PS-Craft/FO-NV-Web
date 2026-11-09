@@ -1,10 +1,17 @@
 {
-  "_hinweis": "Als deploy.local.json speichern (wird nie committet) und ausfüllen.",
-  "protocol": "sftp",
-  "host": "deine-domain.de",
-  "port": 22,
-  "user": "ssh-w0123456",
-  "remoteBase": "/www/htdocs/w0123456",
+  "_hinweis": "Als deploy.local.json speichern (wird nie committet). Bei all-inkl: KAS -> FTP -> Benutzer -> 'Verzeichnis' zeigt den Startordner des FTP-Zugangs.",
+  "protocol": "ftps",
+  "host": "w0123456.kasserver.com",
+  "port": 21,
+  "user": "f0123456",
+  "remoteBase": "/",
+  "serverBase": "/www/htdocs/w0123456",
   "webFolder": "fnv-www",
-  "dlcDefault": true
+  "dlcDefault": true,
+  "_erklaerung": {
+    "protocol": "ftps (Port 21 = explizites TLS, all-inkl) oder sftp (nur mit SSH-Zugang)",
+    "remoteBase": "Pfad, wie der FTP-Zugang ihn sieht – meist '/' (sein Startordner)",
+    "serverBase": "DERSELBE Ordner als absoluter Server-Pfad: /www/htdocs/<Account> + Startordner des FTP-Zugangs",
+    "webFolder": "Ordner, auf den die (Sub-)Domain zeigt, relativ zu remoteBase. Leer nur, wenn die Domain direkt auf den Startordner zeigt"
+  }
 }

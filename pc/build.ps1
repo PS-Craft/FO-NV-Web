@@ -54,7 +54,9 @@ Push-Location $Repo
 try {
     Run 'App bauen (npm)' @('cmd', '/c', 'npm ci && npm run build')
     $Up = Join-Path $Root 'upload'
-    $asm = @('node', 'tools/assemble.mjs', '--recomp', (Join-Path $Recomp 'out\dist'), '--out', $Up, '--remote-base', $cfg.remoteBase, '--init-private')
+    if (-not $cfg.serverBase) { throw 'serverBase fehlt in pc\deploy.local.json (absoluter Server-Pfad, siehe deploy.example.json)' }
+    $asm = @('node', 'tools/assemble.mjs', '--recomp', (Join-Path $Recomp 'out\dist'), '--out', $Up,
+             '--server-base', $cfg.serverBase, '--web-folder', [string]$cfg.webFolder, '--init-private')
     if ($cfg.dlcDefault) { $asm += '--dlc' }
     Run 'Upload-Ordner zusammenstellen' $asm
 } finally { Pop-Location }
