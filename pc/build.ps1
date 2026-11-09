@@ -1,4 +1,4 @@
-# FO-NV-Web – Browser-Version aus deiner eigenen FalloutNV.exe bauen und ein Upload-Paket schnüren.
+﻿# FO-NV-Web – Browser-Version aus deiner eigenen FalloutNV.exe bauen und ein Upload-Paket schnüren.
 # Voraussetzung: setup.ps1 ist durchgelaufen und alle Punkte stehen auf OK.
 #
 #   .\build.ps1                 kompletter Build (beim ersten Mal ca. 10–20 Minuten)

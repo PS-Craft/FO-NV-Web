@@ -1,4 +1,4 @@
-# FO-NV-Web – Einrichtung des Build-PCs (Windows 10/11, PowerShell als Administrator)
+﻿# FO-NV-Web – Einrichtung des Build-PCs (Windows 10/11, PowerShell als Administrator)
 #
 #   Set-ExecutionPolicy -Scope Process Bypass; .\setup.ps1
 #
@@ -19,7 +19,7 @@ $Venv    = Join-Path $Recomp 'local\venv'
 
 function Step($t) { Write-Host "`n=== $t" -ForegroundColor Cyan }
 function Have($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
-function Winget($id) {
+function Install-WingetPkg($id) {
     if (-not (winget list --id $id -e 2>$null | Select-String $id)) {
         winget install --id $id -e --accept-source-agreements --accept-package-agreements
     } else { Write-Host "$id ist schon installiert" }
@@ -27,12 +27,12 @@ function Winget($id) {
 
 Step '1/6 Grundwerkzeuge (winget)'
 if (-not (Have winget)) { throw 'winget fehlt: "App-Installer" aus dem Microsoft Store installieren.' }
-Winget 'Git.Git'
-Winget 'Python.Python.3.12'
-Winget 'OpenJS.NodeJS.LTS'
-Winget 'LLVM.LLVM'
+Install-WingetPkg 'Git.Git'
+Install-WingetPkg 'Python.Python.3.12'
+Install-WingetPkg 'OpenJS.NodeJS.LTS'
+Install-WingetPkg 'LLVM.LLVM'
 # Windows SDK (Header/Libs für gen_import_table.py, gen_com_tables.py und d3d9_caps_dump.cpp)
-Winget 'Microsoft.WindowsSDK.10.0.22621'
+Install-WingetPkg 'Microsoft.WindowsSDK.10.0.22621'
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 
 Step '2/6 Quellcode holen'
@@ -66,6 +66,9 @@ if ($steamGame) {
 } else {
     Write-Warning 'Fallout New Vegas nicht gefunden. In Steam installieren (und einmal starten), dann Skript erneut ausführen.'
 }
+
+Step '5b/6 vkd3d-compiler (Shader-Werkzeug)'
+& (Join-Path $PSScriptRoot 'vkd3d-prepare.ps1')
 
 Step '6/6 Prüfung'
 $checks = [ordered]@{
