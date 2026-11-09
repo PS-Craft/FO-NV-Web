@@ -3,15 +3,21 @@
 ## Beantwortet
 
 - ✅ **Spiel:** New Vegas bei Steam gekauft (Fallout 3 wird nicht genutzt).
-- ✅ **Hosting:** eigenes, sicheres Weblaufwerk (PHP-Webspace), passwortgeschützt, auch unterwegs.
+- ✅ **Hosting:** eigenes Weblaufwerk (PHP-Webspace), passwortgeschützt, auch unterwegs; genug Speicher frei.
 - ✅ **Entwicklung:** auf GitHub; Claude ist Hauptentwickler.
 - ✅ **Steuerung:** Touch muss gehen (Tastatur nicht immer dabei).
 - ✅ **Anspruch:** Es muss am Ende vollständig und gut laufen.
+- ✅ **iPad:** iPad mit A16, iPadOS 26.5.2.
+- ✅ **DLCs:** alle, aber **ein-/ausschaltbar** (Einstellung) → Umsetzung in `hosting/fs.php` geplant.
+- ✅ **PC per Remote Control:** später; erst wenn für den Build nötig.
+
+## Befund 2026-11-09
+
+- falloutnewvegasweb.com stürzt auf dem iPad bei **17 % („Compiling the game“)** ab.
+  Vermutung: Safari verkraftet den Start nicht – 3 GB fest reservierter geteilter Speicher,
+  64 Threads auf einmal und/oder das Übersetzen des ~95-MB-Programms.
+  → Der **Belastungstest** in der Web-App (Abschnitt 2) misst, welcher Teil es ist.
 
 ## Noch offen
 
-1. **Schnelltest:** Läuft falloutnewvegasweb.com (Low, Quick Start) auf deinem iPad? → [ANLEITUNG.md](ANLEITUNG.md), Schritt 0
-2. **Welches iPad** (Modell, iPadOS-Version)?
-3. **Welcher Webspace genau** (Anbieter/Tarif)? Gibt es SSH/SFTP? Wie viel Speicher ist frei (~12 GB nötig)?
-4. **PC per Remote Control verbinden?** Dann richte ich den Build selbst ein ([ANLEITUNG.md](ANLEITUNG.md), Abschnitt „PC mit Claude verbinden“).
-5. **DLCs** mitnehmen (Dead Money, Honest Hearts, Old World Blues, Lonesome Road, …)?
+1. Ergebnis des Belastungstests auf dem iPad (Seite muss dafür einmal online gehen, siehe Chat).
