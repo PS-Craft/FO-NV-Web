@@ -1,0 +1,20 @@
+{
+  "name": "fo-nv-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser-/iPad-Engine, die Fallout: New Vegas mit den eigenen Spieldaten des Nutzers abspielt (keine Spieldaten enthalten).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:no-gamedata": "node scripts/check-no-gamedata.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^6.4.5",
+    "vitest": "^3.2.7"
+  }
+}
