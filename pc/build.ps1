@@ -3,18 +3,19 @@
 #
 #   .\build.ps1                 kompletter Build (beim ersten Mal ca. 10–20 Minuten)
 #   .\build.ps1 -SkipShaders    Shader nicht neu übersetzen
+#   .\build.ps1 -AppOnly       nur App und Server-Dateien neu zusammenstellen (kein Spiel-Build)
 #
 # Ergebnis:  C:\FNV-Web\upload\  (www, fnv-mobile, fnv-private) -> mit .\deploy.ps1 hochladen
 
-param([switch]$SkipShaders)
+param([switch]$SkipShaders, [switch]$AppOnly)
 $ErrorActionPreference = 'Stop'
 $Root   = 'C:\FNV-Web'
 $Recomp = Join-Path $Root 'fnv-web-recomp'
 $Py     = Join-Path $Recomp 'local\venv\Scripts\python.exe'
 $Here   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Hosting = Join-Path (Split-Path -Parent $Here) 'hosting'
-$Exe    = Join-Path $env:FNV_GAME 'FalloutNV.exe'
-if (-not (Test-Path $Exe)) { throw "FalloutNV.exe nicht gefunden (FNV_GAME=$env:FNV_GAME). Erst setup.ps1 ausführen." }
+$Exe    = if ($env:FNV_GAME) { Join-Path $env:FNV_GAME 'FalloutNV.exe' } else { '' }
+if (-not $AppOnly -and -not (Test-Path $Exe)) { throw "FalloutNV.exe nicht gefunden (FNV_GAME=$env:FNV_GAME). Erst setup.ps1 ausführen." }
 $env:PYTHON = $Py
 
 function Run($what, [string[]]$cmd) {
@@ -25,25 +26,27 @@ function Run($what, [string[]]$cmd) {
     Write-Host ("    fertig in {0:n0} s" -f $sw.Elapsed.TotalSeconds)
 }
 
-Push-Location $Recomp
-try {
-    Run 'Programm in C++ übersetzen (recomp.py)'       @($Py, '-B', 'tools/recomp.py', '--exe', $Exe, '--shards', '64')
-    Run 'Import-Tabelle'                               @($Py, '-B', 'tools/gen_import_table.py', '--exe', $Exe)
-    Run 'COM-Tabellen'                                 @($Py, '-B', 'tools/gen_com_tables.py')
-    if (-not (Test-Path 'out/recomp/d3d9_caps.inc')) {
-        Run 'Direct3D-9-Fähigkeiten (d3d9_caps_dump)'  @('C:\Program Files\LLVM\bin\clang-cl.exe', '--target=i686-pc-windows-msvc', '/O1',
-                                                          'tools/d3d9_caps_dump.cpp', 'd3d9.lib', '/Fe:out/d3d9_caps_dump.exe')
-        & .\out\d3d9_caps_dump.exe | Set-Content -Encoding ascii out/recomp/d3d9_caps.inc
-    }
-    if (-not $SkipShaders) {
-        $sdp = Get-ChildItem (Join-Path $env:FNV_GAME 'Data\Shaders') -Filter *.sdp | ForEach-Object FullName
-        Run 'Shader übersetzen (vkd3d + tint)'         (@($Py, '-B', 'tools/shader_spike.py') + $sdp)
-        Run 'Shader-Manifest'                          @($Py, '-B', 'tools/shader_manifest.py')
-    }
-    Run 'WebAssembly bauen (Emscripten, -O2)'          @($Py, '-B', 'tools/recomp_build_web.py', '--target', 'browser')
-    Run 'iPad-Archive (kleinere Texturen/Sounds)'      @($Py, '-B', 'tools/mobile_archives.py', '--game', $env:FNV_GAME)
-    Run 'Paket schnüren (recomp_bundle.py)'            @($Py, '-B', 'tools/recomp_bundle.py')
-} finally { Pop-Location }
+if (-not $AppOnly) {
+  Push-Location $Recomp
+  try {
+      Run 'Programm in C++ übersetzen (recomp.py)'       @($Py, '-B', 'tools/recomp.py', '--exe', $Exe, '--shards', '64')
+      Run 'Import-Tabelle'                               @($Py, '-B', 'tools/gen_import_table.py', '--exe', $Exe)
+      Run 'COM-Tabellen'                                 @($Py, '-B', 'tools/gen_com_tables.py')
+      if (-not (Test-Path 'out/recomp/d3d9_caps.inc')) {
+          Run 'Direct3D-9-Fähigkeiten (d3d9_caps_dump)'  @('C:\Program Files\LLVM\bin\clang-cl.exe', '--target=i686-pc-windows-msvc', '/O1',
+                                                            'tools/d3d9_caps_dump.cpp', 'd3d9.lib', '/Fe:out/d3d9_caps_dump.exe')
+          & .\out\d3d9_caps_dump.exe | Set-Content -Encoding ascii out/recomp/d3d9_caps.inc
+      }
+      if (-not $SkipShaders) {
+          $sdp = Get-ChildItem (Join-Path $env:FNV_GAME 'Data\Shaders') -Filter *.sdp | ForEach-Object FullName
+          Run 'Shader übersetzen (vkd3d + tint)'         (@($Py, '-B', 'tools/shader_spike.py') + $sdp)
+          Run 'Shader-Manifest'                          @($Py, '-B', 'tools/shader_manifest.py')
+      }
+      Run 'WebAssembly bauen (Emscripten, -O2)'          @($Py, '-B', 'tools/recomp_build_web.py', '--target', 'browser')
+      Run 'iPad-Archive (kleinere Texturen/Sounds)'      @($Py, '-B', 'tools/mobile_archives.py', '--game', $env:FNV_GAME)
+      Run 'Paket schnüren (recomp_bundle.py)'            @($Py, '-B', 'tools/recomp_bundle.py')
+  } finally { Pop-Location }
+}
 
 # ---- App bauen und Upload-Ordner zusammenstellen (dieselbe Logik, die die Tests prüfen) ----------------
 $Repo = Split-Path -Parent $Here
