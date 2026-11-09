@@ -1,6 +1,6 @@
 # Anleitung: New Vegas privat im Browser (iPad, unterwegs, mit Passwort)
 
-**Stand:** 2026-11-09 · Server-Teil getestet (Apache + PHP, wie bei all-inkl) · PC-Build-Skripte noch
+**Stand:** 2026-11-09 · App und Server getestet (Apache + PHP, wie bei all-inkl) · PC-Build-Skripte noch
 nicht auf echtem PC getestet
 
 ## Wie es funktioniert
@@ -70,39 +70,58 @@ Die Original-Shader (Direct3D 9) werden in WebGPU-Shader übersetzt. Dafür brau
 vkd3d-Version und Tint aus Googles Dawn. Dieser Teil ist am wenigsten standardisiert – **den machen wir
 gemeinsam**, sobald Schritt 2 durch ist.
 
-## Schritt 4 – Spieldateien hochladen (einmalig, dauert je nach Leitung Stunden)
+## Schritt 4 – Zugangsdaten fürs Hochladen
 
-Mit **WinSCP** oder **FileZilla** (SFTP, falls dein Tarif es hat, sonst FTPS):
-- aus `…\steamapps\common\Fallout New Vegas\` die Datei `FalloutNV.exe` und den kompletten Ordner `Data`
-- nach `fnv-game/` auf dem Weblaufwerk.
+`pc\deploy.example.json` als **`pc\deploy.local.json`** speichern und ausfüllen (SFTP-/FTP-Zugang aus dem KAS,
+`remoteBase` = absoluter Pfad des Webspace, z. B. `/www/htdocs/w0123456`, `webFolder` = Ordner der Subdomain).
+Diese Datei wird nie committet.
 
 ## Schritt 5 – Bauen und hochladen
 
 ```powershell
-.\build.ps1
+.\build.ps1               # Spiel aus der eigenen exe bauen + App + Upload-Ordner (C:\FNV-Web\upload)
+.\deploy.ps1 -GameFiles   # erstes Mal: zusätzlich FalloutNV.exe + Data\ (~10 GB)
+.\deploy.ps1              # später: nur Geändertes
 ```
 
-Dann hochladen:
-- Inhalt von `C:\FNV-Web\upload\www\` → `fnv-www/` (inkl. der versteckten Datei `.htaccess`!)
-- `C:\FNV-Web\upload\fnv-mobile\` → `fnv-mobile/`
+`deploy.ps1` legt die Ordner auf dem Server an, lädt App, Spiel-Build, iPad-Archive und Server-Dateien hoch und
+richtet beim allerersten Mal den **Startzugang `admin`** ein (das Startpasswort steht nicht im Repo, nur sein
+Prüfwert; Claude hat es dir im Chat gegeben). `fs-config.php` und `.htaccess` werden automatisch erzeugt.
 
-Auf dem Server `fs-config.example.php` zu **`fs-config.php`** umbenennen und die Pfade eintragen
-(absolute Pfade, bei all-inkl beginnend mit `/www/htdocs/wXXXXXXX/`). `'dlc' => true`, wenn die DLCs
-dabei sein sollen.
+## Schritt 6 – Erster Start
 
-## Schritt 6 – Spielen
+1. iPad → Safari → `https://fnv.deine-domain.de` → Name `admin` + Startpasswort.
+2. Die App verlangt sofort ein **eigenes Passwort**. Danach fragt Safari einmal nach dem neuen.
+3. Teilen → **Zum Home-Bildschirm**, ab dann von dort starten.
+4. **Admin** → weitere Spieler-Zugänge und **Cheat-Passwörter** anlegen.
 
-1. iPad → Safari → `https://fnv.deine-domain.de` → Benutzername/Passwort.
-2. Teilen → **Zum Home-Bildschirm**. Von dort starten (Vollbild).
-3. Qualität **Low** (fürs iPad automatisch vorgewählt), dann Start.
-4. **Touch-Steuerung** erscheint automatisch: Joystick links = Laufen, auf dem Rest wischen = Umsehen,
-   kurzes Tippen = Klick, Knöpfe für Feuern, Zielen, Benutzen, Springen, Nachladen, Ducken, Pip-Boy, VATS,
-   Menü. Ein Bluetooth-Controller oder eine Tastatur gehen auch.
-5. Unterwegs: einfach dieselbe Adresse – Mobilfunk genügt, beim ersten Start werden aber mehrere
-   hundert MB geladen (danach aus dem Browser-Cache).
+## Die App
 
-**Spielstände** liegen in `fnv-data/` auf dem Weblaufwerk – also auf allen Geräten dieselben.
-Gelegentlich per FTP sichern. Zusätzlich: Knopf „Save game“ speichert eine Kopie aufs Gerät.
+| Bereich | Was es kann |
+|---|---|
+| **Spielen** | Spiel starten, letzter Spielstand, Überblick |
+| **Spielstände** | Liste, Herunterladen, Hochladen, Löschen; **Backups** als ZIP anlegen, herunterladen, einspielen, wiederherstellen (vorher automatische Sicherheitskopie) |
+| **Spieldaten** | **DLCs einzeln an/aus** (pro Spieler), Speicherbelegung auf dem Gerät |
+| **Cheats** | Freischalten mit Cheat-Passwort; im Spiel dann über **☰** |
+| **Admin** | Spieler-Zugänge (anlegen, Passwort zurücksetzen, Admin-Rechte, löschen), Cheat-Passwörter |
+| **Diagnose** | Systemcheck und Belastungstest |
+
+**Im Spiel:** standardmäßig **randlos** (Bild füllt den Bildschirm, keine Leisten). Winziger **☰**-Knopf oben in
+der Mitte: Zur App · Vollbild · Randlos/Mit Leiste · Cheats (Gott-Modus, Durch Wände, Heilen, Kronkorken,
+Erfahrung, Tragkraft, Kartenorte, Unentdeckt, KI anhalten, eigener Konsolenbefehl). Touch-Steuerung des Spiels
+bleibt unverändert.
+
+Jeder Spieler hat **eigene Spielstände, Backups und DLC-Einstellungen**.
+
+**Getestet** (ohne echtes Spiel, mit Ersatz-Spielseite): Apache + PHP mit Passwortschutz, 24 Unit-Tests
+(`npm test`) und ein Klick-Test durch die ganze App mit 13 Prüfungen (`tools/e2e-app.cjs`).
+
+## Noch nicht fertig
+
+- **Lokale Kopie der Spieldaten** auf dem iPad mit eigener Verwaltung: folgt nach dem ersten erfolgreichen
+  Spielstart (braucht einen Test, ob Safari die Datei-Anfragen des Spiels über einen Service Worker umleiten lässt).
+  Bis dahin hält der Browser-Cache geladene Daten.
+- **iPad-Variante des Builds** (weniger Threads/Speicher), siehe `docs/spikes/S2-ipad-belastung.md`.
 
 ---
 

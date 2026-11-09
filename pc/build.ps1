@@ -4,10 +4,7 @@
 #   .\build.ps1                 kompletter Build (beim ersten Mal ca. 10–20 Minuten)
 #   .\build.ps1 -SkipShaders    Shader nicht neu übersetzen
 #
-# Ergebnis:  C:\FNV-Web\upload\
-#   www\          -> auf das Weblaufwerk in den Ordner der (Sub-)Domain
-#   fnv-mobile\   -> auf das Weblaufwerk neben den Web-Ordner (verkleinerte Archive fürs iPad)
-# Die Spieldateien (Data\) lädst du einmalig separat hoch (Anleitung Schritt 4).
+# Ergebnis:  C:\FNV-Web\upload\  (www, fnv-mobile, fnv-private) -> mit .\deploy.ps1 hochladen
 
 param([switch]$SkipShaders)
 $ErrorActionPreference = 'Stop'
@@ -48,14 +45,19 @@ try {
     Run 'Paket schnüren (recomp_bundle.py)'            @($Py, '-B', 'tools/recomp_bundle.py')
 } finally { Pop-Location }
 
-Write-Host "`n=== Upload-Ordner zusammenstellen" -ForegroundColor Cyan
-$Up = Join-Path $Root 'upload'
-if (Test-Path $Up) { Remove-Item -Recurse -Force $Up }
-New-Item -ItemType Directory -Force "$Up\www" | Out-Null
-Copy-Item -Recurse (Join-Path $Recomp 'out\dist\*') "$Up\www"
-Copy-Item (Join-Path $Hosting 'fs.php') "$Up\www\fs.php"
-Copy-Item (Join-Path $Hosting 'htaccess.txt') "$Up\www\.htaccess"
-Copy-Item (Join-Path $Hosting 'fs-config.example.php') "$Up\www\fs-config.example.php"
-Copy-Item -Recurse (Join-Path $Recomp 'out\mobile') "$Up\fnv-mobile"
+# ---- App bauen und Upload-Ordner zusammenstellen (dieselbe Logik, die die Tests prüfen) ----------------
+$Repo = Split-Path -Parent $Here
+$cfgFile = Join-Path $Here 'deploy.local.json'
+if (-not (Test-Path $cfgFile)) { throw "pc\deploy.local.json fehlt – Vorlage: pc\deploy.example.json" }
+$cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
+Push-Location $Repo
+try {
+    Run 'App bauen (npm)' @('cmd', '/c', 'npm ci && npm run build')
+    $Up = Join-Path $Root 'upload'
+    $asm = @('node', 'tools/assemble.mjs', '--recomp', (Join-Path $Recomp 'out\dist'), '--out', $Up, '--remote-base', $cfg.remoteBase, '--init-private')
+    if ($cfg.dlcDefault) { $asm += '--dlc' }
+    Run 'Upload-Ordner zusammenstellen' $asm
+} finally { Pop-Location }
+Copy-Item -Recurse (Join-Path $Recomp 'out\mobile') (Join-Path $Up 'fnv-mobile')
 $size = (Get-ChildItem -Recurse $Up | Measure-Object Length -Sum).Sum / 1MB
-Write-Host ("Fertig: {0} ({1:n0} MB). Weiter mit Schritt 5 der Anleitung." -f $Up, $size) -ForegroundColor Green
+Write-Host ("Fertig: {0} ({1:n0} MB). Weiter mit .\deploy.ps1" -f $Up, $size) -ForegroundColor Green

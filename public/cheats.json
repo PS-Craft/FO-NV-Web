@@ -1,0 +1,11 @@
+[
+  { "id": "god", "label": "Gott-Modus", "cmd": "tgm", "help": "unverwundbar, unbegrenzt Munition und Ausdauer (nochmal = aus)" },
+  { "id": "noclip", "label": "Durch Wände", "cmd": "tcl", "help": "fliegen und durch Wände gehen (nochmal = aus)" },
+  { "id": "heal", "label": "Voll heilen", "cmd": "player.restoreav health 9999", "help": "Lebenspunkte auffüllen" },
+  { "id": "caps", "label": "+1000 Kronkorken", "cmd": "player.additem f 1000", "help": "1000 Kronkorken ins Inventar" },
+  { "id": "xp", "label": "+1000 Erfahrung", "cmd": "rewardxp 1000", "help": "1000 Erfahrungspunkte" },
+  { "id": "carry", "label": "+500 Tragkraft", "cmd": "player.modav carryweight 500", "help": "mehr tragen können" },
+  { "id": "map", "label": "Alle Kartenorte", "cmd": "tmm 1", "help": "alle Orte auf der Karte aufdecken" },
+  { "id": "detect", "label": "Unentdeckt", "cmd": "tdetect", "help": "Gegner bemerken dich nicht (nochmal = aus)" },
+  { "id": "ai", "label": "KI anhalten", "cmd": "tai", "help": "alle Figuren stehen still (nochmal = aus)" }
+]

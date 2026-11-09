@@ -1,0 +1,10 @@
+{
+  "_hinweis": "Als deploy.local.json speichern (wird nie committet) und ausfüllen.",
+  "protocol": "sftp",
+  "host": "deine-domain.de",
+  "port": 22,
+  "user": "ssh-w0123456",
+  "remoteBase": "/www/htdocs/w0123456",
+  "webFolder": "fnv-www",
+  "dlcDefault": true
+}
