@@ -45,6 +45,8 @@ $lines += "put -filemask=`"|*/`" `"$Up\www\*`" `"$($web.TrimEnd('/'))/`""
 $lines += "synchronize remote -criteria=size `"$Up\fnv-mobile`" `"$base/fnv-mobile`""
 if ($GameFiles) {
     $lines += "put `"$env:FNV_GAME\FalloutNV.exe`" `"$base/fnv-game/`""
+    # Fallout_default.ini & Co.: ohne sie startet das Spiel mit falschen Speicher-Vorgaben und stürzt beim Laden ab (OOM)
+    $lines += "put `"$env:FNV_GAME\*.ini`" `"$base/fnv-game/`""
     $lines += "mkdir `"$base/fnv-game/Data`""
     $lines += "synchronize remote -criteria=size `"$env:FNV_GAME\Data`" `"$base/fnv-game/Data`""
 }
