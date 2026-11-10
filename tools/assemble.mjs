@@ -63,6 +63,9 @@ window.fonvLocal = (function () { try { return localStorage.getItem('fonv.offlin
 window.fonvEnv = { FNV_FS_CACHE_MB: window.fonvLocal ? '32' : '__STREAM_CACHE__' };
 </script>
 <script src="precheck.js"></script>`, 'precheck.js');
+// iPad-Variante: immer die kleinen Archive. Die iPad-Grafik kann die komprimierten Texturen nicht direkt nutzen
+// (kein BC), sie werden entpackt und brauchen ein Vielfaches an Speicher – mit "High" schließt iPadOS den Tab.
+patch("const qualityParam = query.get('quality') ||", "const qualityParam = query.get('quality') || window.fonvQuality ||", 'Qualität');
 patch('const env = {};', 'const env = Object.assign({}, window.fonvEnv);', 'env');
 patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät geladen' : 'downloaded'}` + (boot.file", 'Ladeanzeige');
 // Geräte-Check der Spielseite: mit Daten vom Gerät weder die Leitung messen noch vor langsamer Verbindung warnen
@@ -95,7 +98,9 @@ if (ipad) {
     if (!fresh(src + '.gz')) fs.writeFileSync(src + '.gz', zlib.gzipSync(fs.readFileSync(src), { level: 9 }));
   }
   for (const f of fs.readdirSync(ipad)) if (/^fnv_web\.(js|wasm)(\.(br|gz))?$/.test(f)) fs.copyFileSync(path.join(ipad, f), path.join(www, 'build-ipad', f));
-  fs.writeFileSync(path.join(www, 'game-ipad.html'), page('64').replaceAll("'/build/fnv_web.js'", "'/build-ipad/fnv_web.js'"));
+  fs.writeFileSync(path.join(www, 'game-ipad.html'), page('64').replaceAll("'/build/fnv_web.js'", "'/build-ipad/fnv_web.js'")
+    .replace('window.fonvEnv = {', "window.fonvQuality = 'low'; window.fonvEnv = {")
+    .replace('</head>', '<style>#qHigh { display: none !important; }</style></head>'));
 }
 
 // 2) unsere App (überschreibt nichts vom Spiel außer index.html)

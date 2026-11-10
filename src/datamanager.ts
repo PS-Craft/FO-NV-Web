@@ -23,7 +23,8 @@ function eta(left: number): string {
 export async function renderDataManager(el: HTMLElement, dlc: Dlc[]): Promise<void> {
   const dlcOff = dlc.filter((d) => !d.enabled).map((d) => d.name.toLowerCase());
   const state = await readState();
-  if (!quality) quality = state.enabled ? state.quality : isPhone() ? 'low' : 'high';
+  // Tablets/Handys: immer Niedrig – mit Hoch schließt iPadOS den Tab (Texturen brauchen dort ein Vielfaches an Speicher)
+  if (!quality) quality = isPhone() ? 'low' : state.enabled ? state.quality : 'high';
   const ov = await overview(quality, dlcOff);
   const est = await navigator.storage?.estimate?.().catch(() => undefined);
   const free = est?.quota !== undefined && est.usage !== undefined ? est.quota - est.usage : undefined;
@@ -37,6 +38,7 @@ export async function renderDataManager(el: HTMLElement, dlc: Dlc[]): Promise<vo
       <div class="head"><h2>Offline spielen</h2>${complete ? '<span class="badge ok">Auf dem Gerät</span>' : state.enabled ? '<span class="badge">Teilweise</span>' : ''}</div>
       <p class="muted">Lädt das Spiel einmal auf dieses Gerät. Danach startet es vom Gerät – ohne Wartezeit auf den Server
       und auch ganz ohne Internet. Spielstände bleiben in der Cloud (deinem Server) und werden automatisch abgeglichen.</p>
+      ${isPhone() && state.enabled && state.quality === 'high' ? '<p class="hint">⚠️ Auf diesem Gerät liegt Qualität <b>Hoch</b>. Am iPad führt sie zu Abstürzen – das Spiel benutzt hier jetzt <b>Niedrig</b>. Tippe auf „Herunterladen“: es fehlen nur rund 0,9 GB, die großen Hoch-Dateien werden danach gelöscht.</p>' : ''}
       <div id="dmSupport" class="muted">${support ? (support.ok ? '' : `⚠️ ${esc(support.reason)}`) : 'Prüfe, ob dieser Browser das kann …'}</div>
       <div class="row wrap" role="radiogroup" aria-label="Qualität">
         <label class="check"><input type="radio" name="dmq" value="high" ${quality === 'high' ? 'checked' : ''}/> Hoch – volle Texturen (PC)</label>

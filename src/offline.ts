@@ -204,6 +204,13 @@ export async function refreshAppCache(): Promise<boolean> {
   return state.app !== before;
 }
 
+async function removeFile(key: string): Promise<void> {
+  let dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('fnv');
+  const parts = key.slice(1).split('/');
+  for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p);
+  await dir.removeEntry(parts[parts.length - 1]!);
+}
+
 export function startDownload(quality: Quality, dlcOff: string[], report: (p: Progress) => void): Promise<void> {
   if (running) return running;
   running = (async () => {
@@ -262,6 +269,17 @@ export function startDownload(quality: Quality, dlcOff: string[], report: (p: Pr
       } finally {
         onWorkerEvent = null;
         clearTimeout(saveTimer);
+        await saveState(state);
+        await swCall('reload').catch(() => undefined);
+      }
+      // fertig: Dateien, die nicht mehr zum Plan gehören (z. B. die großen Archive nach dem Wechsel auf Niedrig), löschen
+      if (result !== 'stopped') {
+        const keep = new Set(plan.files.map((f) => f.key));
+        for (const key of Object.keys(state.files)) {
+          if (keep.has(key)) continue;
+          await removeFile(key).catch(() => undefined);
+          delete state.files[key];
+        }
         await saveState(state);
         await swCall('reload').catch(() => undefined);
       }
