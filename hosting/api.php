@@ -38,6 +38,7 @@ $users = htpasswd_read();
 
 $me = current_user();
 if ($route === 'me') {
+    if ($me !== null) speed_up_hash($me);     // einmalig: teuren Passwort-Hash auf die schnelle Stufe umstellen
     reply(200, ['user' => $me, 'admin' => is_admin($me), 'mustChangePassword' => must_change($me),
                 'zip' => class_exists('ZipArchive'), 'perUser' => (bool)cfg()['per_user']]);
 }
