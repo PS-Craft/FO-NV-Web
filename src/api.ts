@@ -41,6 +41,8 @@ const url = (route: string) => `./api/${route}`;
 async function parse<T>(r: Response): Promise<T> {
   const type = r.headers.get('content-type') || '';
   const body = type.includes('json') ? await r.json() : null;
+  // Anmeldung unterwegs verloren (Netzwechsel o. Ä.): gleich zur Anmeldung, statt Fehler über Fehler zu zeigen
+  if (r.status === 401) setTimeout(() => location.replace('./?login=' + Date.now()), 3000);
   if (!r.ok) throw new ApiError(r.status, (body && body.error) || `Fehler ${r.status}`);
   return body as T;
 }

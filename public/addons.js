@@ -5,7 +5,9 @@
 //   von dort in die Cloud.
 // - Anzeige (fonv.display, in der App wählbar): "fullscreen" (Vollbild ab dem ersten Tippen/Klicken), "window"
 //   (randlos im Fenster) – beide ohne Leisten und Knöpfe –, "classic" (Seite mit Leiste und Knöpfen).
-// - Menü: Taste F8 oder oben in der Mitte tippen (dort liegt ein unsichtbarer Knopf; mit der Maus erscheint er).
+// - Menü: Taste F8 oder der Knopf ☰ oben in der Mitte (mit Maus unsichtbar, bis sie an den oberen Rand kommt; auf
+//   Touch-Geräten wie dem iPad ohne Tastatur immer leicht sichtbar).
+// - Anmeldung verloren (Netzwechsel o. Ä.): nach ein paar Sekunden zurück zur Anmeldung.
 // - Cheats laufen über die Spielkonsole (Module.ccall('fnv_console', …)), freigeschaltet per Cheat-Passwort.
 (function () {
   'use strict';
@@ -16,6 +18,7 @@
     sset: function (k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* egal */ } },
   };
 
+  var TOUCH = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || navigator.maxTouchPoints > 1;
   var css = [
     'html.fonv-borderless, html.fonv-borderless body { background:#000; height:100%; margin:0; overflow:hidden; }',
     'html.fonv-borderless #wrap { max-width:none; padding:0; height:100%; display:flex; align-items:center; justify-content:center; }',
@@ -30,6 +33,7 @@
     '  width:min(92vw,420px); max-height:80dvh; overflow:auto; background:rgba(26,20,16,.96); color:#f1e3c8; border-radius:14px;',
     '  padding:12px; box-shadow:0 10px 40px rgba(0,0,0,.6); font:15px/1.4 -apple-system,system-ui,sans-serif; }',
     '#fonv-panel[hidden] { display:none; }',
+    'html.fonv-touch.fonv-clean #fonv-btn { opacity:.55; width:64px; height:30px; border-radius:15px; line-height:30px; font-size:18px; }',
     '#fonv-panel h3 { margin:12px 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#b39d7c; }',
     '#fonv-panel .g { display:grid; grid-template-columns:1fr 1fr; gap:8px; }',
     '#fonv-panel button, #fonv-panel a.b { min-height:44px; border:0; border-radius:10px; background:#3a2c20; color:#f1e3c8;',
@@ -139,12 +143,26 @@
     saving = false;
   }
 
+  // ---- Anmeldung -----------------------------------------------------------------------------------------
+  // Nach einem Netzwechsel kennt der Server die Anmeldung manchmal nicht mehr (401): dann nach ein paar Sekunden zur
+  // Startseite, wo der Browser wieder nach Name und Passwort fragt. Ohne Netz (offline) bleibt das Spiel einfach offen.
+  var leaving = false;
+  function checkAuth() {
+    if (leaving) return;
+    fetch('./api/me', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+      if (r.status !== 401 || leaving) return;
+      leaving = true;
+      toast('Anmeldung abgelaufen – gleich geht es zur Anmeldung');
+      setTimeout(function () { location.replace('./?login=' + Date.now()); }, 4000);
+    }, function () { /* offline */ });
+  }
+
   // ---- Panel ---------------------------------------------------------------------------------------------
   var panel, btn;
   function paint() {
     var label = store.sget('fonv.cheats');
     var html =
-      '<div class="g"><a class="b accent" href="./">Zur App</a><button data-a="close">Schließen (F8)</button>' +
+      '<div class="g"><a class="b accent" href="./">Zur App</a><button data-a="close">' + (TOUCH ? 'Schließen' : 'Schließen (F8)') + '</button>' +
       '<button data-a="fs"' + (mode() === 'fullscreen' ? ' class="accent"' : '') + '>' + (isFullscreen() ? 'Vollbild aus' : 'Vollbild') + '</button>' +
       '<button data-a="win"' + (mode() === 'window' ? ' class="accent"' : '') + '>Fenster</button>' +
       '<button data-a="classic"' + (mode() === 'classic' ? ' class="accent"' : '') + '>Mit Leiste</button></div>' +
@@ -212,7 +230,8 @@
       clearTimeout(peekTimer);
       peekTimer = setTimeout(function () { document.documentElement.classList.remove('fonv-peek'); }, 2000);
     }, { passive: true });
-    btn = el('button', { id: 'fonv-btn', 'aria-label': 'Menü (F8)' }, '☰');
+    document.documentElement.classList.toggle('fonv-touch', TOUCH);
+    btn = el('button', { id: 'fonv-btn', 'aria-label': 'Menü' }, '☰');
     panel = el('div', { id: 'fonv-panel', hidden: '' });
     document.body.appendChild(btn);
     document.body.appendChild(panel);
@@ -224,7 +243,9 @@
     btn.addEventListener('click', togglePanel);
     setInterval(syncSaves, 3000);
     document.addEventListener('visibilitychange', function () { if (document.hidden) syncSaves(); });
-    if (m !== 'classic') toast('Menü: F8 oder oben in der Mitte tippen');
+    if (m !== 'classic') toast(TOUCH ? 'Menü: ☰ oben in der Mitte antippen' : 'Menü: F8 oder Maus an den oberen Rand');
+    setInterval(checkAuth, 20000);
+    window.addEventListener('online', function () { setTimeout(checkAuth, 2000); });
     panel.addEventListener('click', onClick);
     panel.addEventListener('submit', onSubmit);
     document.addEventListener('fullscreenchange', function () { if (!panel.hidden) paint(); });
