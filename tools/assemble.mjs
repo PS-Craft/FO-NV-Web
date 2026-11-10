@@ -66,6 +66,8 @@ window.fonvEnv = { FNV_FS_CACHE_MB: window.fonvLocal ? '32' : '__STREAM_CACHE__'
 // iPad-Variante: immer die kleinen Archive. Die iPad-Grafik kann die komprimierten Texturen nicht direkt nutzen
 // (kein BC), sie werden entpackt und brauchen ein Vielfaches an Speicher – mit "High" schließt iPadOS den Tab.
 patch("const qualityParam = query.get('quality') ||", "const qualityParam = query.get('quality') || window.fonvQuality ||", 'Qualität');
+// Einsprung für addons.js, bevor das Spiel selbst startet (sparsame Einstellungen für die iPad-Variante)
+patch('onRuntimeInitialized: () => { log(', 'onRuntimeInitialized: () => { try { window.fonvRuntime && window.fonvRuntime(); } catch (e) { console.warn(e); } log(', 'onRuntimeInitialized');
 patch('const env = {};', 'const env = Object.assign({}, window.fonvEnv);', 'env');
 patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät geladen' : 'downloaded'}` + (boot.file", 'Ladeanzeige');
 // Geräte-Check der Spielseite: mit Daten vom Gerät weder die Leitung messen noch vor langsamer Verbindung warnen

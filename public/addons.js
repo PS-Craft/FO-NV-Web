@@ -35,6 +35,7 @@
     '#fonv-panel[hidden] { display:none; }',
     'html.fonv-notouch #touch { display:none !important; }',
     'html.fonv-notouch #screen { pointer-events:auto !important; }',
+    'html.fonv-touch.fonv-notouch #screen { cursor:none; }',
     'html.fonv-touch.fonv-clean #fonv-btn { opacity:.55; width:64px; height:30px; border-radius:15px; line-height:30px; font-size:18px; }',
     '#fonv-panel h3 { margin:12px 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#b39d7c; }',
     '#fonv-panel .g { display:grid; grid-template-columns:1fr 1fr; gap:8px; }',
@@ -190,7 +191,9 @@
     };
     var keyTo = function (e, down) {
       var d = DIK[e.code], M = window.Module;
-      if (!d || !M || !M._fnv_key || typing(e) || e.metaKey) return;   // Spielfläche mit Fokus: das macht die Spielseite
+      if (e.metaKey && e.code === 'Period') d = 1;              // iPad-Tastaturen ohne Esc: Cmd+Punkt
+      else if (e.metaKey) return;
+      if (!d || !M || !M._fnv_key || typing(e)) return;   // Spielfläche mit Fokus: das macht die Spielseite
       e.preventDefault();
       if (!(down && e.repeat)) M._fnv_key(d, down ? 1 : 0);
     };
@@ -307,7 +310,6 @@
         toast(hide ? 'Tastatur/Maus: Touch-Steuerung ausgeblendet' : 'Touch-Steuerung eingeblendet');
       };
       window.addEventListener('keydown', function (e) { if (DIK[e.code] && !typing(e)) auto(true); });
-      document.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse' && (e.movementX || e.movementY)) auto(true); }, true);
       document.addEventListener('pointerdown', function (e) {
         if (e.pointerType === 'mouse') auto(true);
         else if (!(panel && panel.contains(e.target)) && e.target !== btnEl()) auto(false);
@@ -315,6 +317,60 @@
     }
   }
   function btnEl() { return document.getElementById('fonv-btn'); }
+
+  // ---- Sparsame Spiel-Einstellungen (iPad-Variante) ---------------------------------------------------------
+  // iPadOS schließt den Tab, wenn er zu viel Speicher braucht – ohne Fehlermeldung, mitten im Spiel. Die iPad-Seite
+  // (window.fonvQuality = 'low') legt dem Spiel deshalb vor dem Start eine eigene Fallout.ini in seinen Ordner
+  // (nur in diesem Tab): Fallout_default.ini mit kürzeren Sichtweiten, halber Texturauflösung, ohne Figurenschatten
+  // und mit weniger zwischengespeicherten Gebieten. Bewusst NICHT geändert: alles, was andere Shader-Wege einschaltet
+  // (HDR, Wasser-Spiegelung an/aus, Kantenglättung) und uGridsToLoad (Spielstände hängen daran).
+  var LITE = {
+    General: { 'uInterior Cell Buffer': 1, 'uExterior Cell Buffer': 12, bPreemptivelyUnloadCells: 1, iPreloadSizeLimit: 8388608, bSelectivePurgeUnusedOnFastTravel: 1 },
+    Display: { iTexMipMapSkip: 1, iMaxDecalsPerFrame: 2, iActorShadowCountInt: 0, iActorShadowCountExt: 0, iShadowMapResolution: 256,
+      fSpecularLODStartFade: '200.0000', fShadowLODStartFade: '100.0000', fLightLODStartFade: '200.0000', fDecalLOD1: '500.0000', fDecalLOD2: '1000.0000' },
+    LOD: { fLODFadeOutMultActors: '3.0', fLODFadeOutMultObjects: '3.0', fLODFadeOutMultItems: '2.0' },
+    TerrainManager: { fTreeLoadDistance: '0.0000', fBlockLoadDistanceLow: '25000.0000', fBlockLoadDistance: '125000.0000', fSplitDistanceMult: '0.7500', fHighBlockLoadDistanceLow: '20000.0000' },
+    Grass: { fGrassStartFadeDistance: '0.0000' },
+    Water: { iWaterReflectWidth: 256, iWaterReflectHeight: 256 },
+  };
+  var lite = { on: window.fonvQuality === 'low' && store.get('fonv.lite') !== '0', ini: null, applied: '' };
+  function mergeIni(text, over) {
+    var lines = text.split(/\r?\n/), out = [], sec = '', todo = JSON.parse(JSON.stringify(over));
+    var flush = function () {                                  // fehlende Schlüssel am Ende des Abschnitts ergänzen
+      var rest = todo[sec];
+      if (rest) for (var k in rest) out.push(k + '=' + rest[k]);
+      delete todo[sec];
+    };
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i], m = /^\s*\[([^\]]+)\]/.exec(l);
+      if (m) { flush(); sec = m[1]; out.push(l); continue; }
+      var kv = /^\s*([^=;]+?)\s*=/.exec(l), o = todo[sec];
+      if (kv && o) for (var key in o) if (key.toLowerCase() === kv[1].toLowerCase()) { l = key + '=' + o[key]; delete o[key]; break; }
+      out.push(l);
+    }
+    flush();
+    for (var s2 in todo) { out.push('[' + s2 + ']'); for (var k2 in todo[s2]) out.push(k2 + '=' + todo[s2][k2]); }
+    return out.join('\r\n');
+  }
+  function liteInit() {
+    if (!lite.on) return;
+    // früh holen (das Spiel braucht mehrere Sekunden bis zum Start); Bytes 1:1 als Zeichen, damit Umlaute heil bleiben
+    var p = encodeURIComponent('/game/Fallout_default.ini');
+    fetch('/fs/stat?p=' + p, { credentials: 'same-origin' }).then(function (r) { return r.json(); })
+      .then(function (st) { return fetch('/fs/read?p=' + p + '&o=0&n=' + st.size + '&v=' + st.mtime, { credentials: 'same-origin' }); })
+      .then(function (r) { return r.arrayBuffer(); })
+      .then(function (b) { var u = new Uint8Array(b), t = ''; for (var i = 0; i < u.length; i++) t += String.fromCharCode(u[i]); lite.ini = mergeIni(t, LITE); })
+      .catch(function (e) { lite.applied = 'ini nicht geladen: ' + e; });
+    window.fonvRuntime = function () {
+      var M = window.Module;
+      if (!lite.ini || !M || !M._fnv_docs_put || !M._malloc) { lite.applied = lite.applied || 'ini kam zu spät'; return; }
+      var n = lite.ini.length, d = M._malloc(n) >>> 0;
+      for (var i = 0; i < n; i++) M.HEAPU8[d + i] = lite.ini.charCodeAt(i) & 255;
+      var ok = M.ccall('fnv_docs_put', 'number', ['string', 'number', 'number'], ['/docs/My Games/FalloutNV/Fallout.ini', d, n]);
+      M._free(d);
+      lite.applied = ok ? 'sparsame Einstellungen aktiv' : 'Fallout.ini nicht angenommen';
+    };
+  }
 
   // ---- Diagnose-Protokoll ---------------------------------------------------------------------------------
   // Alle paar Sekunden eine Zeile über den Zustand des Spiels in den eigenen Ordner auf dem Server
@@ -348,6 +404,7 @@
     if (diag.n === 0) e.dev = { ua: navigator.userAgent, page: location.pathname + location.search, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
       cores: navigator.hardwareConcurrency, mem: navigator.deviceMemory, touch: navigator.maxTouchPoints, quality: b.quality, env: window.fonvEnv,
       standalone: !!navigator.standalone, display: mode() };
+    e.lite = lite.applied || undefined;
     var sig = [e.text, e.stage, e.mb, e.fail, e.hidden, e.status.replace(/\d+ fps/, 'fps')].join('|');
     if (!force && sig === diag.sig && !e.errs.length && !e.log.length && diag.n % 6 !== 0) { diag.n++; return; }
     diag.sig = sig;
@@ -376,6 +433,9 @@
       '<button data-a="classic"' + (mode() === 'classic' ? ' class="accent"' : '') + '>Mit Leiste</button>' +
       (TOUCH ? '<button data-a="touch"' + (touchOn() ? ' class="accent"' : '') + '>Touch-Steuerung: ' + (touchOn() ? 'An' : 'Aus') + '</button>' : '') + '</div>' +
       (TOUCH ? '<p class="muted">Tastatur und Maus gehen immer, auch zusammen mit Touch. „Aus“ blendet Stick und Knöpfe aus.</p>' : '') +
+      '<h3>Tasten</h3><div class="g"><button data-key="1">Esc – Pause/Menü</button><button data-key="15">Tab – Pip-Boy</button>' +
+      '<button data-key="63">F5 – Schnellspeichern</button><button data-key="67">F9 – Schnellladen</button></div>' +
+      '<p class="muted">Ohne Esc-Taste (iPad-Tastatur): Cmd + Punkt.</p>' +
       '<h3>Cheats</h3>';
     if (label) {
       html += '<div class="g">' + cheats.map(function (c) { return '<button data-cmd="' + esc(c.cmd) + '" title="' + esc(c.help) + '">' + esc(c.label) + '</button>'; }).join('') + '</div>' +
@@ -396,6 +456,12 @@
     else if (a === 'classic') setMode('classic');
     else if (a === 'touch') { setTouch(!touchOn()); toast(touchOn() ? 'Touch-Steuerung an' : 'Touch-Steuerung aus – Tastatur/Maus'); }
     else if (a === 'close') { panel.hidden = true; return; }
+    else if (t.hasAttribute('data-key')) {
+      var M = window.Module, k = +t.getAttribute('data-key');
+      panel.hidden = true;
+      if (M && M._fnv_key) { M._fnv_key(k, 1); setTimeout(function () { M._fnv_key(k, 0); }, 120); }
+      return;
+    }
     else if (t.hasAttribute('data-cmd')) runCommand(t.getAttribute('data-cmd'));
     setTimeout(paint, 300);
   }
@@ -456,6 +522,7 @@
     document.addEventListener('visibilitychange', function () { if (document.hidden) syncSaves(); });
     if (m !== 'classic') toast(TOUCH ? 'Menü: ☰ oben in der Mitte antippen' : 'Menü: F8 oder Maus an den oberen Rand');
     setInterval(checkAuth, 20000);
+    liteInit();
     inputInit();
     diagHook();
     diagTick(true);
