@@ -35,4 +35,5 @@ hosting/fs-config.php
 # lokale Zugangsdaten fürs Hochladen
 pc/deploy.local.json
 pc/deploy.password.xml
+pc/deploy.state.json
 pc/deploy.log
