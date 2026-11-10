@@ -72,9 +72,6 @@ $lines = @("mkdir `"$base/fnv-private`"", "mkdir `"$base/fnv-data`"", "mkdir `"$
 if ($web -ne '/') { $lines += "mkdir `"$web`"" }
 $lines += "synchronize remote -criteria=size `"$Up\www`" `"$web`""
 foreach ($rel in $changed) { $lines += "put `"$root$($rel.Replace('/', '\'))`" `"$webDir/$rel`"" }
-# vorkomprimierte Fassungen von Dateien, die tools/assemble.mjs verändert: auf dem Server löschen, sonst liefert
-# Apache weiter die alte .br/.gz aus (darf scheitern, wenn sie schon weg sind)
-foreach ($f in @('precheck.js.br', 'precheck.js.gz')) { if (-not (Test-Path "$root$f")) { $lines += "rm `"$webDir/$f`"" } }
 $lines += "synchronize remote -criteria=size `"$Up\fnv-mobile`" `"$base/fnv-mobile`""
 if ($GameFiles) {
     $lines += "put `"$env:FNV_GAME\FalloutNV.exe`" `"$base/fnv-game/`""
@@ -87,6 +84,11 @@ Write-Host "Lade hoch nach $($cfg.host):$base … ($($changed.Count) geänderte 
 $r = Invoke-WinScp $lines "$Here\deploy.log" -Show
 if ($r.code -ne 0) { throw "Upload fehlgeschlagen (siehe pc\deploy.log)" }
 $new | ConvertTo-Json | Set-Content $stateFile -Encoding UTF8
+
+# vorkomprimierte Fassungen von Dateien, die tools/assemble.mjs verändert: auf dem Server löschen, sonst liefert
+# Apache weiter die alte .br/.gz aus. Eigener Lauf, Ergebnis egal: sind sie schon weg, meldet WinSCP einen Fehler.
+$stale = @('precheck.js.br', 'precheck.js.gz') | Where-Object { -not (Test-Path "$root$_") } | ForEach-Object { "rm `"$webDir/$_`"" }
+if ($stale) { [void](Invoke-WinScp (@('option batch continue') + $stale)) }
 
 # Startzugang nur, wenn noch keine Benutzerliste existiert. "Nicht gefunden" gilt nur, wenn die Verbindung steht und
 # der Ordner lesbar ist – ein Verbindungsfehler darf die echte Benutzerliste nie mit dem Startzugang überschreiben.

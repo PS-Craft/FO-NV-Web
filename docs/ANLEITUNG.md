@@ -112,6 +112,11 @@ Prüfwert; Claude hat es dir im Chat gegeben). `fs-config.php` und `.htaccess` w
 Heilen, Kronkorken, Erfahrung, Tragkraft, Kartenorte, Unentdeckt, KI anhalten, eigener Konsolenbefehl).
 **Eingabe:** Tastatur geht immer – auch am iPad mit Tastatur und zusammen mit Touch; Maus/Trackpad ebenso. Die
 Touch-Steuerung (Stick und Knöpfe) lässt sich im ☰-Menü aus- und einschalten.
+Am iPad blendet sie sich von selbst aus, sobald du Tastatur oder Maus/Trackpad benutzt, und wieder ein, wenn du das
+Bild mit dem Finger berührst. **In Menüs** (Hauptmenü, Pip-Boy, Dialoge) klickt ein Fingertipp genau dort, wo du
+tippst, und der Spielzeiger folgt Maus/Trackpad exakt (gilt für die GOG-Fassung 1.4.0.525).
+**iPad-Qualität:** `game-ipad.html` benutzt immer die kleinen Archive („Niedrig“) – mit „Hoch“ schließt iPadOS den
+Tab wegen Speichermangel.
 **Diagnose:** Die Spielseite schreibt alle paar Sekunden ihren Zustand nach `fnv-data/users/<Name>/FONV-Diagnose/`
 (eigener Server). Schließt der Browser den Tab, zeigt die letzte Zeile, was das Spiel gerade tat.
 **Tempo:** Apache prüft das Passwort bei jeder Anfrage. Die App speichert Passwörter deshalb mit bcrypt-Stufe 6 und

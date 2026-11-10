@@ -196,16 +196,125 @@
     };
     window.addEventListener('keydown', function (e) { keyTo(e, true); });
     window.addEventListener('keyup', function (e) { keyTo(e, false); });
-    // Maus/Trackpad ohne Zeigersperre (Safari am iPad kennt sie nicht): Bewegung und Tasten direkt ans Spiel
-    if (canvas && !canvas.requestPointerLock) {
+    // ---- Zeiger im Menü: genau dorthin, wo getippt/gezeigt wird ---------------------------------------------
+    // Das Spiel kennt nur Mausbewegungen (relativ, beschleunigt). Wo sein Zeiger steht und ob ein Menü offen ist,
+    // steht im Speicher der FalloutNV.exe 1.4.0.525 (InterfaceManager 0x11D8A80: Zeiger x +0x38, y +0x40 in
+    // 1280x720; Menü offen: 0x11DEA2B). Damit regeln wir nach: Stand lesen, Bewegung senden, wieder lesen.
+    // Passen die Werte nicht (andere Spielversion), bleibt alles beim Verhalten der Spielseite.
+    var ui = function () {
+      var M = window.Module;
+      if (!M || !M.HEAPU8 || !M._fnv_mouse) return null;
+      var dv = new DataView(M.HEAPU8.buffer), ptr = dv.getUint32(0x11D8A80, true);
+      if (!ptr || ptr + 0x44 > M.HEAPU8.length) return null;
+      var x = dv.getFloat32(ptr + 0x38, true), y = dv.getFloat32(ptr + 0x40, true);
+      if (!(x >= -8 && x <= 1288 && y >= -8 && y <= 728)) return null;
+      return { menu: M.HEAPU8[0x11DEA2B] === 1, x: x, y: y };
+    };
+    var want = null, moving = false;
+    var units = function (e) {                                  // Bildpunkte -> Mauseinheiten (gemessen: ~0,065·d²)
+      var n = Math.abs(e);
+      if (n < 1.5) return 0;
+      var v = n < 12 ? Math.max(1, Math.round(n / 0.9)) : Math.round(Math.sqrt(n / 0.065) * 0.8);
+      return e < 0 ? -v : v;
+    };
+    var step = function () {
+      var u = ui(), w = want;
+      if (!u || !w) { moving = false; want = null; if (w && w.done) w.done(); return; }
+      var ex = w.x - u.x, ey = w.y - u.y;
+      if ((Math.abs(ex) < 4 && Math.abs(ey) < 4) || ++w.n > 12) { moving = false; want = null; if (w.done) w.done(); return; }
+      moving = true;
+      window.Module._fnv_mouse(units(ex), units(ey), 0, -1, 0);
+      var t0 = performance.now();
+      (function wait() {                                         // bis das Spiel die Bewegung verarbeitet hat
+        var c = ui();
+        if (!c || c.x !== u.x || c.y !== u.y || performance.now() - t0 > 160) step(); else setTimeout(wait, 10);
+      })();
+    };
+    var moveTo = function (x, y, done) {
+      want = { x: x, y: y, n: 0, done: done || (want && want.done) };
+      if (!moving) step();
+    };
+    var gamePoint = function (e) {
+      var r = canvas.getBoundingClientRect();
+      return { x: Math.max(0, Math.min(1280, (e.clientX - r.left) / r.width * 1280)), y: Math.max(0, Math.min(720, (e.clientY - r.top) / r.height * 720)) };
+    };
+    var press = function (button, down) { var M = window.Module; if (M && M._fnv_mouse) M._fnv_mouse(0, 0, 0, button, down ? 1 : 0); };
+
+    // Touch im Menü: Finger setzt den Zeiger und drückt, Ziehen zieht (Regler, Bildlaufleisten), Loslassen lässt los.
+    // Im Spiel selbst (kein Menü) bleibt die Touch-Steuerung der Spielseite: Stick, Umsehen, Tippen = Feuer.
+    var pad = document.getElementById('touch'), finger = null;
+    if (pad && canvas) {
+      pad.addEventListener('pointerdown', function (e) {
+        var u = ui();
+        if (e.pointerType === 'mouse' || finger || !u || !u.menu || e.target.closest('button')) return;
+        e.stopPropagation(); e.preventDefault();
+        try { pad.setPointerCapture(e.pointerId); } catch (err) { /* egal */ }
+        finger = { id: e.pointerId, down: false, up: false, at: 0 };
+        var g = gamePoint(e), f = finger;
+        moveTo(g.x, g.y, function () {
+          setTimeout(function () {                              // kurz stehen lassen: das Menü hebt den Eintrag erst hervor
+            press(0, true); f.down = true; f.at = performance.now();
+            if (f.up) setTimeout(function () { press(0, false); }, 90);
+          }, 60);
+        });
+      }, true);
+      pad.addEventListener('pointermove', function (e) {
+        if (!finger || e.pointerId !== finger.id) return;
+        e.stopPropagation();
+        if (finger.down) { var g = gamePoint(e); moveTo(g.x, g.y); }
+      }, true);
+      var lift = function (e) {
+        if (!finger || e.pointerId !== finger.id) return;
+        e.stopPropagation();
+        var f = finger;
+        finger = null;
+        f.up = true;
+        if (f.down) setTimeout(function () { press(0, false); }, Math.max(0, 90 - (performance.now() - f.at)));
+      };
+      ['pointerup', 'pointercancel'].forEach(function (ev) { pad.addEventListener(ev, lift, true); });
+    }
+
+    // Maus/Trackpad ohne Zeigersperre (Safari am iPad kennt sie nicht): im Menü folgt der Spielzeiger dem Mauszeiger
+    // genau, im Spiel dreht die Bewegung die Sicht. Mit Zeigersperre (PC) macht das die Spielseite selbst.
+    if (canvas) {
       var btn = function (e) { return e.button === 2 ? 1 : e.button === 1 ? 2 : 0; };
-      var M = function () { return window.Module && window.Module._fnv_mouse ? window.Module : null; };
-      canvas.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse' && M()) M()._fnv_mouse(e.movementX || 0, e.movementY || 0, 0, -1, 0); });
-      canvas.addEventListener('pointerdown', function (e) { if (e.pointerType === 'mouse' && M()) M()._fnv_mouse(0, 0, 0, btn(e), 1); });
-      canvas.addEventListener('pointerup', function (e) { if (e.pointerType === 'mouse' && M()) M()._fnv_mouse(0, 0, 0, btn(e), 0); });
-      canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+      var free = function (e) { return e.pointerType === 'mouse' && document.pointerLockElement !== canvas && (TOUCH || !canvas.requestPointerLock); };
+      var mouseMove = function (e) {
+        if (!free(e)) return;
+        var u = ui();
+        if (u && u.menu) { var g = gamePoint(e); moveTo(g.x, g.y); }
+        else if (window.Module && window.Module._fnv_mouse) window.Module._fnv_mouse(e.movementX || 0, e.movementY || 0, 0, -1, 0);
+      };
+      canvas.addEventListener('pointermove', mouseMove);
+      canvas.addEventListener('pointerdown', function (e) {
+        if (!free(e)) return;
+        var u = ui(), b = btn(e);
+        if (u && u.menu) { var g = gamePoint(e); moveTo(g.x, g.y, function () { press(b, true); }); } else press(b, true);
+      });
+      canvas.addEventListener('pointerup', function (e) { if (free(e)) setTimeout(function () { press(btn(e), false); }, 90); });
+      canvas.addEventListener('contextmenu', function (e) { if (TOUCH) e.preventDefault(); });
+    }
+
+    // Tastatur oder Maus benutzt: Touch-Steuerung ausblenden; Finger auf dem Bild: wieder einblenden
+    // (nur wenn sie im Menü nicht ganz ausgeschaltet ist)
+    if (TOUCH) {
+      var auto = function (hide) {
+        if (!touchOn()) return;
+        var c = document.documentElement.classList;
+        if (c.contains('fonv-notouch') === hide) return;
+        c.toggle('fonv-notouch', hide);
+        if (hide) window.dispatchEvent(new Event('blur'));
+        toast(hide ? 'Tastatur/Maus: Touch-Steuerung ausgeblendet' : 'Touch-Steuerung eingeblendet');
+      };
+      window.addEventListener('keydown', function (e) { if (DIK[e.code] && !typing(e)) auto(true); });
+      document.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse' && (e.movementX || e.movementY)) auto(true); }, true);
+      document.addEventListener('pointerdown', function (e) {
+        if (e.pointerType === 'mouse') auto(true);
+        else if (!(panel && panel.contains(e.target)) && e.target !== btnEl()) auto(false);
+      }, true);
     }
   }
+  function btnEl() { return document.getElementById('fonv-btn'); }
 
   // ---- Diagnose-Protokoll ---------------------------------------------------------------------------------
   // Alle paar Sekunden eine Zeile über den Zustand des Spiels in den eigenen Ordner auf dem Server
