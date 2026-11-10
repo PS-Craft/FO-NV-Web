@@ -9,7 +9,9 @@
 //   fnv-private/.htpasswd   nur beim ersten Mal: Zugang "admin" mit dem Startpasswort
 //
 // node tools/assemble.mjs --recomp <out/dist> --app <dist> --out <upload> --server-base </www/htdocs/w0123456>
-//                         [--web-folder fnv-www] [--dlc] [--init-private]
+//                         [--web-folder fnv-www] [--dlc] [--init-private] [--ipad-build <web_browser_ipad>]
+//
+// --ipad-build:  zweiter Emscripten-Build mit weniger Threads/Speicher (pc/build.ps1) -> build-ipad/ + game-ipad.html
 //
 // --server-base: ABSOLUTER Pfad auf dem Server (wie PHP/Apache ihn sehen), unter dem fnv-private/ usw. liegen.
 //                Nur die .htaccess braucht ihn (AuthUserFile). Bei all-inkl: /www/htdocs/<account>/<FTP-Startordner>.
@@ -19,6 +21,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -47,7 +50,38 @@ if (!game.includes('</body>')) fail('index.html des Spiels hat kein </body>');
 // Werbeskript der öffentlichen Seite: auf dem privaten Server nicht laden (Datenschutz; COEP blockt es ohnehin)
 game = game.replace(/<script[^>]*adsbygoogle[\s\S]*?<\/script>\s*/g, '');
 game = game.replace('</body>', '<script src="addons.js"></script>\n</body>');
-fs.writeFileSync(path.join(www, 'game.html'), game);
+// Einstellungen für die Engine, bevor sie startet (FNV_* in der Adresse haben weiter Vorrang):
+// - fonvLocal: der Datenmanager hat das Spiel aufs Gerät geladen und sw.js liefert es aus
+// - Block-Cache der Engine (FNV_FS_CACHE_MB, Standard 256): vom Gerät gelesen braucht es ihn kaum -> 32 MB; das gibt
+//   dem Spiel über 200 MB mehr vom festen Speicher (sonst "OOM" beim Laden der Welt). Gestreamt 128, iPad-Variante 64.
+const patch = (from, to, what) => {
+  if (!game.includes(from)) fail(`game.html: ${what} nicht gefunden – Spielseite hat sich geändert, tools/assemble.mjs anpassen`);
+  game = game.replace(from, to);
+};
+patch('<script type="module">', `<script>
+window.fonvLocal = (function () { try { return localStorage.getItem('fonv.offline') === '1' && !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch (e) { return false; } })();
+window.fonvEnv = { FNV_FS_CACHE_MB: window.fonvLocal ? '32' : '__STREAM_CACHE__' };
+</script>
+<script type="module">`, 'Modul-Skript');
+patch('const env = {};', 'const env = Object.assign({}, window.fonvEnv);', 'env');
+patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät geladen' : 'downloaded'}` + (boot.file", 'Ladeanzeige');
+const page = (cache) => game.replace('__STREAM_CACHE__', cache);
+fs.writeFileSync(path.join(www, 'game.html'), page('128'));
+const ipad = opt('--ipad-build');
+if (ipad) {
+  if (!fs.existsSync(path.join(ipad, 'fnv_web.wasm'))) fail(`--ipad-build: ${ipad}/fnv_web.wasm fehlt`);
+  if (!game.includes("'/build/fnv_web.js'")) fail("game.html lädt nicht mehr '/build/fnv_web.js' – iPad-Seite anpassen");
+  fs.mkdirSync(path.join(www, 'build-ipad'));
+  // vorkomprimierte Fassungen (die .htaccess liefert sie aus; 95 MB -> ~14 MB), einmal neben dem Build gemerkt
+  for (const f of ['fnv_web.js', 'fnv_web.wasm']) {
+    const src = path.join(ipad, f), mt = fs.statSync(src).mtimeMs;
+    const fresh = (x) => fs.existsSync(x) && fs.statSync(x).mtimeMs >= mt;
+    if (!fresh(src + '.br')) fs.writeFileSync(src + '.br', zlib.brotliCompressSync(fs.readFileSync(src), { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } }));
+    if (!fresh(src + '.gz')) fs.writeFileSync(src + '.gz', zlib.gzipSync(fs.readFileSync(src), { level: 9 }));
+  }
+  for (const f of fs.readdirSync(ipad)) if (/^fnv_web\.(js|wasm)(\.(br|gz))?$/.test(f)) fs.copyFileSync(path.join(ipad, f), path.join(www, 'build-ipad', f));
+  fs.writeFileSync(path.join(www, 'game-ipad.html'), page('64').replaceAll("'/build/fnv_web.js'", "'/build-ipad/fnv_web.js'"));
+}
 
 // 2) unsere App (überschreibt nichts vom Spiel außer index.html)
 for (const f of fs.readdirSync(appDist)) {

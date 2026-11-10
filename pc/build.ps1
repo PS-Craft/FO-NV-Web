@@ -5,6 +5,11 @@
 #   .\build.ps1 -SkipShaders    Shader nicht neu übersetzen
 #   .\build.ps1 -AppOnly       nur App und Server-Dateien neu zusammenstellen (kein Spiel-Build)
 #
+# iPad-Variante (game-ipad.html + build-ipad/): weniger vorab gestartete Threads und weniger fester Speicher, damit
+# Safari den Tab nicht schließt. Einstellbar: $env:FNV_IPAD_POOL (Standard 24; das Spiel nutzt ~17 Threads),
+# $env:FNV_IPAD_MEMORY in MiB (Standard 2560, erlaubt 2048–3072; mit 2048 bricht das Spiel beim Laden mit "OOM" ab,
+# 2560 reicht zusammen mit dem kleinen Block-Cache, den tools/assemble.mjs für game-ipad.html einstellt).
+#
 # Ergebnis:  C:\FNV-Web\upload\  (www, fnv-mobile, fnv-private) -> mit .\deploy.ps1 hochladen
 
 param([switch]$SkipShaders, [switch]$AppOnly)
@@ -35,7 +40,11 @@ if (-not $AppOnly) {
       if (-not (Test-Path 'out/recomp/d3d9_caps.inc')) {
           Run 'Direct3D-9-Fähigkeiten (d3d9_caps_dump)'  @('C:\Program Files\LLVM\bin\clang-cl.exe', '--target=i686-pc-windows-msvc', '/O1',
                                                             'tools/d3d9_caps_dump.cpp', 'd3d9.lib', '/Fe:out/d3d9_caps_dump.exe')
-          & .\out\d3d9_caps_dump.exe | Set-Content -Encoding ascii out/recomp/d3d9_caps.inc
+          # erst in eine Zwischendatei: ein abgebrochener Lauf darf keine halbe d3d9_caps.inc hinterlassen (sie würde
+          # bei jedem späteren Build wiederverwendet)
+          $caps = & .\out\d3d9_caps_dump.exe
+          if ($LASTEXITCODE -ne 0 -or -not $caps) { throw 'd3d9_caps_dump fehlgeschlagen' }
+          $caps | Set-Content -Encoding ascii out/recomp/d3d9_caps.inc
       }
       if (-not $SkipShaders) {
           $sdp = Get-ChildItem (Join-Path $env:FNV_GAME 'Data\Shaders') -Filter *.sdp | ForEach-Object FullName
@@ -43,6 +52,10 @@ if (-not $AppOnly) {
           Run 'Shader-Manifest'                          @($Py, '-B', 'tools/shader_manifest.py')
       }
       Run 'WebAssembly bauen (Emscripten, -O2)'          @($Py, '-B', 'tools/recomp_build_web.py', '--target', 'browser')
+      $pool = if ($env:FNV_IPAD_POOL) { $env:FNV_IPAD_POOL } else { '24' }
+      $mem  = if ($env:FNV_IPAD_MEMORY) { $env:FNV_IPAD_MEMORY } else { '2560' }
+      Run "WebAssembly iPad-Variante ($pool Threads, $mem MiB)" @($Py, '-B', 'tools/recomp_build_web.py', '--target', 'browser',
+          '--pthread-pool-size', $pool, '--memory-mib', $mem, '--browser-out', 'out/recomp/web_browser_ipad')
       Run 'iPad-Archive (kleinere Texturen/Sounds)'      @($Py, '-B', 'tools/mobile_archives.py', '--game', $env:FNV_GAME)
       Run 'Paket schnüren (recomp_bundle.py)'            @($Py, '-B', 'tools/recomp_bundle.py')
   } finally { Pop-Location }
@@ -63,6 +76,8 @@ try {
     # Leere Argumente verschluckt Windows PowerShell 5.1 beim Aufruf von node: --web-folder dann ganz weglassen
     if ([string]$cfg.webFolder) { $asm += '--web-folder', [string]$cfg.webFolder }
     if ($cfg.dlcDefault) { $asm += '--dlc' }
+    $ipad = Join-Path $Recomp 'out\recomp\web_browser_ipad'
+    if (Test-Path (Join-Path $ipad 'fnv_web.wasm')) { $asm += '--ipad-build', $ipad }
     Run 'Upload-Ordner zusammenstellen' $asm
 } finally { Pop-Location }
 Copy-Item -Recurse (Join-Path $Recomp 'out\mobile') (Join-Path $Up 'fnv-mobile')

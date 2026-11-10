@@ -108,9 +108,11 @@ Prüfwert; Claude hat es dir im Chat gegeben). `fs-config.php` und `.htaccess` w
 
 **Anzeige** (unter „Spielen“ wählbar, auch im Spiel-Menü): **Vollbild** (ab dem ersten Tippen/Klicken),
 **Fenster** (randlos, ohne Leisten und Knöpfe) oder **Mit Leiste** (Originalseite). **Menü im Spiel:** Taste **F8**
-oder oben in der Mitte tippen (mit der Maus erscheint dort ☰): Zur App · Anzeige · Cheats (Gott-Modus, Durch Wände,
+(oder Maus an den oberen Rand, dann ☰), am iPad den Knopf **☰** oben in der Mitte antippen: Zur App · Anzeige · Cheats (Gott-Modus, Durch Wände,
 Heilen, Kronkorken, Erfahrung, Tragkraft, Kartenorte, Unentdeckt, KI anhalten, eigener Konsolenbefehl).
 Touch-Steuerung des Spiels bleibt unverändert.
+Geht die Anmeldung verloren (z. B. nach einem Netzwechsel), leiten App und Spiel nach ein paar Sekunden
+selbst zur Anmeldung weiter.
 
 **Spielstände** speichert das Spiel auf dem Server (`fnv-data/<Spieler>`), sie erscheinen unter „Spielstände“.
 
@@ -122,6 +124,9 @@ Touch-Steuerung des Spiels bleibt unverändert.
 - **Spielstände in der Cloud:** werden auf dem Gerät gespeichert und im Hintergrund mit dem Server abgeglichen
   (nach dem Speichern hochgeladen, beim App-Start geholt). Haben zwei Geräte denselben Spielstand geändert, bleiben
   beide erhalten (der vom Server als „… (Cloud Datum)“).
+- **Das Netz stört nicht mehr:** Spieldaten, App, Shader und Spielstände kommen vom Gerät; die Ladeanzeige sagt dann
+  „vom Gerät geladen“. Fällt der Server aus oder wechselt das Netz, läuft das Spiel weiter (lokal geprüft: Start mit
+  abgeschaltetem Server, 0 Anfragen für Spieldaten).
 - **Vom Gerät löschen** lädt vorher offene Spielstände hoch; auf dem Server ändert sich nichts.
 - Vorher prüft die App selbst, ob der Browser das kann. iPad: App über Teilen → **Zum Home-Bildschirm** öffnen,
   sonst darf Safari die Daten nach einiger Zeit löschen.
@@ -135,7 +140,10 @@ Jeder Spieler hat **eigene Spielstände, Backups und DLC-Einstellungen**.
 
 - **Offline auf dem iPad:** in Chrome geprüft; ob Safari die Datei-Anfragen des Spiels über den Service Worker
   leitet, zeigt der Selbsttest im Datenmanager (sonst meldet er es und lädt nichts).
-- **iPad-Variante des Builds** (weniger Threads/Speicher), siehe `docs/spikes/S2-ipad-belastung.md`.
+- **iPad-Variante auf echtem Gerät:** `game-ipad.html` (24 statt 64 vorab gestartete Threads, 2560 statt 3072 MiB
+  fester Speicher, kleiner Block-Cache) läuft in Chrome am PC; auf dem iPad selbst ist sie noch nicht geprüft.
+  Die App wählt sie auf Tablets automatisch („Spielen“ → Version: Automatisch / PC / iPad). Werte ändern:
+  `$env:FNV_IPAD_POOL`, `$env:FNV_IPAD_MEMORY` vor `build.ps1` (2048 MiB reichen nicht: „OOM“ beim Laden).
 
 ---
 
