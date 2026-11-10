@@ -110,7 +110,12 @@ Prüfwert; Claude hat es dir im Chat gegeben). `fs-config.php` und `.htaccess` w
 **Fenster** (randlos, ohne Leisten und Knöpfe) oder **Mit Leiste** (Originalseite). **Menü im Spiel:** Taste **F8**
 (oder Maus an den oberen Rand, dann ☰), am iPad den Knopf **☰** oben in der Mitte antippen: Zur App · Anzeige · Cheats (Gott-Modus, Durch Wände,
 Heilen, Kronkorken, Erfahrung, Tragkraft, Kartenorte, Unentdeckt, KI anhalten, eigener Konsolenbefehl).
-Touch-Steuerung des Spiels bleibt unverändert.
+**Eingabe:** Tastatur geht immer – auch am iPad mit Tastatur und zusammen mit Touch; Maus/Trackpad ebenso. Die
+Touch-Steuerung (Stick und Knöpfe) lässt sich im ☰-Menü aus- und einschalten.
+**Diagnose:** Die Spielseite schreibt alle paar Sekunden ihren Zustand nach `fnv-data/users/<Name>/FONV-Diagnose/`
+(eigener Server). Schließt der Browser den Tab, zeigt die letzte Zeile, was das Spiel gerade tat.
+**Tempo:** Apache prüft das Passwort bei jeder Anfrage. Die App speichert Passwörter deshalb mit bcrypt-Stufe 6 und
+stellt ältere (Stufe 12, ~0,2 s je Anfrage) beim nächsten Öffnen der App automatisch um.
 Geht die Anmeldung verloren (z. B. nach einem Netzwechsel), leiten App und Spiel nach ein paar Sekunden
 selbst zur Anmeldung weiter.
 

@@ -33,6 +33,8 @@
     '  width:min(92vw,420px); max-height:80dvh; overflow:auto; background:rgba(26,20,16,.96); color:#f1e3c8; border-radius:14px;',
     '  padding:12px; box-shadow:0 10px 40px rgba(0,0,0,.6); font:15px/1.4 -apple-system,system-ui,sans-serif; }',
     '#fonv-panel[hidden] { display:none; }',
+    'html.fonv-notouch #touch { display:none !important; }',
+    'html.fonv-notouch #screen { pointer-events:auto !important; }',
     'html.fonv-touch.fonv-clean #fonv-btn { opacity:.55; width:64px; height:30px; border-radius:15px; line-height:30px; font-size:18px; }',
     '#fonv-panel h3 { margin:12px 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#b39d7c; }',
     '#fonv-panel .g { display:grid; grid-template-columns:1fr 1fr; gap:8px; }',
@@ -157,6 +159,103 @@
     }, function () { /* offline */ });
   }
 
+  // ---- Eingabe: Tastatur und Touch zugleich, Touch-Steuerung abschaltbar ------------------------------------
+  // Die Spielseite nimmt Tasten nur an, wenn die Spielfläche den Fokus hat – mit Touch-Steuerung bekommt sie ihn nie
+  // (iPad mit Tastatur). Deshalb hier: Tasten von überall ans Spiel (DirectInput-Codes wie in der Spielseite).
+  var DIK = { Escape: 1, Digit1: 2, Digit2: 3, Digit3: 4, Digit4: 5, Digit5: 6, Digit6: 7, Digit7: 8, Digit8: 9, Digit9: 10,
+    Digit0: 11, Minus: 12, Equal: 13, Backspace: 14, Tab: 15, KeyQ: 16, KeyW: 17, KeyE: 18, KeyR: 19, KeyT: 20, KeyY: 21,
+    KeyU: 22, KeyI: 23, KeyO: 24, KeyP: 25, BracketLeft: 26, BracketRight: 27, Enter: 28, ControlLeft: 29, KeyA: 30,
+    KeyS: 31, KeyD: 32, KeyF: 33, KeyG: 34, KeyH: 35, KeyJ: 36, KeyK: 37, KeyL: 38, Semicolon: 39, Quote: 40,
+    Backquote: 41, ShiftLeft: 42, Backslash: 43, KeyZ: 44, KeyX: 45, KeyC: 46, KeyV: 47, KeyB: 48, KeyN: 49, KeyM: 50,
+    Comma: 51, Period: 52, Slash: 53, ShiftRight: 54, NumpadMultiply: 55, AltLeft: 56, Space: 57, CapsLock: 58, F1: 59,
+    F2: 60, F3: 61, F4: 62, F5: 63, F6: 64, F7: 65, F9: 67, F10: 68, Numpad7: 71, Numpad8: 72, Numpad9: 73,
+    NumpadSubtract: 74, Numpad4: 75, Numpad5: 76, Numpad6: 77, NumpadAdd: 78, Numpad1: 79, Numpad2: 80, Numpad3: 81,
+    Numpad0: 82, NumpadDecimal: 83, F11: 87, F12: 88, NumpadEnter: 156, ControlRight: 157, NumpadDivide: 181,
+    AltRight: 184, Home: 199, ArrowUp: 200, PageUp: 201, ArrowLeft: 203, ArrowRight: 205, End: 207, ArrowDown: 208,
+    PageDown: 209, Insert: 210, Delete: 211 };
+  function touchOn() { return store.get('fonv.touch') !== '0'; }
+  function setTouch(on) {
+    store.set('fonv.touch', on ? '1' : '0');
+    document.documentElement.classList.toggle('fonv-notouch', !on);
+    // losgelassene Tasten/Stick: die Spielseite räumt bei "blur" auf
+    if (!on) window.dispatchEvent(new Event('blur'));
+  }
+  function inputInit() {
+    var canvas = document.getElementById('screen');
+    if (TOUCH && !touchOn()) document.documentElement.classList.add('fonv-notouch');
+    var typing = function (e) {
+      var t = e.target;
+      if (!(t instanceof Node)) return false;
+      return t === canvas || (panel && panel.contains(t)) || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) || (t && t.isContentEditable);
+    };
+    var keyTo = function (e, down) {
+      var d = DIK[e.code], M = window.Module;
+      if (!d || !M || !M._fnv_key || typing(e) || e.metaKey) return;   // Spielfläche mit Fokus: das macht die Spielseite
+      e.preventDefault();
+      if (!(down && e.repeat)) M._fnv_key(d, down ? 1 : 0);
+    };
+    window.addEventListener('keydown', function (e) { keyTo(e, true); });
+    window.addEventListener('keyup', function (e) { keyTo(e, false); });
+    // Maus/Trackpad ohne Zeigersperre (Safari am iPad kennt sie nicht): Bewegung und Tasten direkt ans Spiel
+    if (canvas && !canvas.requestPointerLock) {
+      var btn = function (e) { return e.button === 2 ? 1 : e.button === 1 ? 2 : 0; };
+      var M = function () { return window.Module && window.Module._fnv_mouse ? window.Module : null; };
+      canvas.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse' && M()) M()._fnv_mouse(e.movementX || 0, e.movementY || 0, 0, -1, 0); });
+      canvas.addEventListener('pointerdown', function (e) { if (e.pointerType === 'mouse' && M()) M()._fnv_mouse(0, 0, 0, btn(e), 1); });
+      canvas.addEventListener('pointerup', function (e) { if (e.pointerType === 'mouse' && M()) M()._fnv_mouse(0, 0, 0, btn(e), 0); });
+      canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    }
+  }
+
+  // ---- Diagnose-Protokoll ---------------------------------------------------------------------------------
+  // Alle paar Sekunden eine Zeile über den Zustand des Spiels in den eigenen Ordner auf dem Server
+  // (Einstellungen/Spielstände: FONV-Diagnose/<Start>.txt). Schließt der Browser den Tab (iPad: zu wenig Speicher),
+  // läuft kein Code mehr – die letzte Zeile zeigt dann, was das Spiel gerade tat. Nur eigene Daten, nur eigener Server.
+  var diag = { name: '/docs/FONV-Diagnose/' + new Date().toISOString().replace(/[:.]/g, '-') + '.txt', off: 0, n: 0, sig: '', lines: [], errs: [], busy: false, t0: Date.now() };
+  function diagHook() {
+    var rep = window.fnvReport;
+    if (rep && rep.add && !rep.fonv) {
+      var add = rep.add;
+      rep.fonv = true;
+      rep.add = function (kind, m) {
+        if (!/^\[(vorbis|d3d9|mmio)\]/.test(m)) { diag.lines.push(String(m).slice(0, 160)); if (diag.lines.length > 8) diag.lines.shift(); }
+        return add.apply(this, arguments);
+      };
+    }
+    window.addEventListener('error', function (e) { diag.errs.push(String(e.message || e.type).slice(0, 200)); diagTick(true); });
+    window.addEventListener('unhandledrejection', function (e) { diag.errs.push(String((e.reason && e.reason.message) || e.reason).slice(0, 200)); });
+    document.addEventListener('visibilitychange', function () { diagTick(true); });
+  }
+  function diagTick(force) {
+    if (diag.busy || diag.n > 400) return;
+    var b = window.fnvBoot || {}, P = window.PThread, pm = performance.memory;
+    var st = document.getElementById('status');
+    var e = {
+      s: Math.round((Date.now() - diag.t0) / 1000), text: b.text, stage: b.stage, mb: Math.round((b.kb || 0) / 1024), retries: b.retries,
+      status: st ? st.textContent : '', fail: b.failText, hidden: document.hidden, local: !!window.fonvLocal,
+      threads: P ? P.runningWorkers.length + '/' + (P.runningWorkers.length + P.unusedWorkers.length) : '',
+      jsMB: pm ? Math.round(pm.usedJSHeapSize / 1048576) : undefined, errs: diag.errs.splice(0), log: diag.lines.splice(0),
+    };
+    if (diag.n === 0) e.dev = { ua: navigator.userAgent, page: location.pathname + location.search, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
+      cores: navigator.hardwareConcurrency, mem: navigator.deviceMemory, touch: navigator.maxTouchPoints, quality: b.quality, env: window.fonvEnv,
+      standalone: !!navigator.standalone, display: mode() };
+    var sig = [e.text, e.stage, e.mb, e.fail, e.hidden, e.status.replace(/\d+ fps/, 'fps')].join('|');
+    if (!force && sig === diag.sig && !e.errs.length && !e.log.length && diag.n % 6 !== 0) { diag.n++; return; }
+    diag.sig = sig;
+    diag.n++;
+    var bytes = new TextEncoder().encode(JSON.stringify(e) + '\n');
+    var off = diag.off;
+    diag.off += bytes.length;
+    diag.busy = true;
+    // X-FONV-DL: am Service Worker vorbei direkt zum Server (das Protokoll soll auch dann ankommen, wenn er hängt)
+    var opt = { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'X-FONV-DL': '1' } };
+    var q = encodeURIComponent(diag.name);
+    // beim ersten Mal die Datei anlegen (legt auch den Ordner an), danach nur anhängen
+    diag.made = diag.made || fetch('/fs/truncate?p=' + q, opt);
+    diag.made.then(function () { return fetch('/fs/write?p=' + q + '&o=' + off, Object.assign({ body: bytes }, opt)); })
+      .then(function () { diag.busy = false; }, function () { diag.busy = false; });
+  }
+
   // ---- Panel ---------------------------------------------------------------------------------------------
   var panel, btn;
   function paint() {
@@ -165,7 +264,9 @@
       '<div class="g"><a class="b accent" href="./">Zur App</a><button data-a="close">' + (TOUCH ? 'Schließen' : 'Schließen (F8)') + '</button>' +
       '<button data-a="fs"' + (mode() === 'fullscreen' ? ' class="accent"' : '') + '>' + (isFullscreen() ? 'Vollbild aus' : 'Vollbild') + '</button>' +
       '<button data-a="win"' + (mode() === 'window' ? ' class="accent"' : '') + '>Fenster</button>' +
-      '<button data-a="classic"' + (mode() === 'classic' ? ' class="accent"' : '') + '>Mit Leiste</button></div>' +
+      '<button data-a="classic"' + (mode() === 'classic' ? ' class="accent"' : '') + '>Mit Leiste</button>' +
+      (TOUCH ? '<button data-a="touch"' + (touchOn() ? ' class="accent"' : '') + '>Touch-Steuerung: ' + (touchOn() ? 'An' : 'Aus') + '</button>' : '') + '</div>' +
+      (TOUCH ? '<p class="muted">Tastatur und Maus gehen immer, auch zusammen mit Touch. „Aus“ blendet Stick und Knöpfe aus.</p>' : '') +
       '<h3>Cheats</h3>';
     if (label) {
       html += '<div class="g">' + cheats.map(function (c) { return '<button data-cmd="' + esc(c.cmd) + '" title="' + esc(c.help) + '">' + esc(c.label) + '</button>'; }).join('') + '</div>' +
@@ -184,6 +285,7 @@
     if (a === 'fs') { if (mode() === 'fullscreen') toggleFullscreen(); else setMode('fullscreen'); }
     else if (a === 'win') setMode('window');
     else if (a === 'classic') setMode('classic');
+    else if (a === 'touch') { setTouch(!touchOn()); toast(touchOn() ? 'Touch-Steuerung an' : 'Touch-Steuerung aus – Tastatur/Maus'); }
     else if (a === 'close') { panel.hidden = true; return; }
     else if (t.hasAttribute('data-cmd')) runCommand(t.getAttribute('data-cmd'));
     setTimeout(paint, 300);
@@ -245,6 +347,10 @@
     document.addEventListener('visibilitychange', function () { if (document.hidden) syncSaves(); });
     if (m !== 'classic') toast(TOUCH ? 'Menü: ☰ oben in der Mitte antippen' : 'Menü: F8 oder Maus an den oberen Rand');
     setInterval(checkAuth, 20000);
+    inputInit();
+    diagHook();
+    diagTick(true);
+    setInterval(diagTick, 5000);
     window.addEventListener('online', function () { setTimeout(checkAuth, 2000); });
     panel.addEventListener('click', onClick);
     panel.addEventListener('submit', onSubmit);

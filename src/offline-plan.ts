@@ -13,6 +13,7 @@ export interface PlanFile {
 export type Quality = 'high' | 'low';
 
 const MOBILE = '/game/data/mobile/';
+const DLC_NAMES = ['deadmoney', 'honesthearts', 'oldworldblues', 'lonesomeroad', 'gunrunnersarsenal', 'caravanpack', 'classicpack', 'mercenarypack', 'tribalpack'];
 const DATA = '/game/data/';
 
 /**
@@ -34,7 +35,10 @@ export function planDownload(ix: GameIndex, opts: { quality: Quality; dlcOff: st
     if (key.startsWith(MOBILE) && off.some((n) => base.startsWith(n))) continue;
     files.push({ key, size, mtime });
   }
-  files.sort((a, b) => a.size - b.size || a.key.localeCompare(b.key));
+  // Grundspiel zuerst, DLCs danach (jeweils klein vor groß): fertige Dateien liest das Spiel sofort vom Gerät, so
+  // hilft schon ein halber Download beim Start eines neuen Spiels
+  const late = (k: string) => (DLC_NAMES.some((n) => k.slice(k.lastIndexOf('/') + 1).startsWith(n)) ? 1 : 0);
+  files.sort((a, b) => late(a.key) - late(b.key) || a.size - b.size || a.key.localeCompare(b.key));
   return { files, bytes: files.reduce((s, f) => s + f.size, 0) };
 }
 

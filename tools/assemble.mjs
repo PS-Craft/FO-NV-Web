@@ -58,13 +58,28 @@ const patch = (from, to, what) => {
   if (!game.includes(from)) fail(`game.html: ${what} nicht gefunden – Spielseite hat sich geändert, tools/assemble.mjs anpassen`);
   game = game.replace(from, to);
 };
-patch('<script type="module">', `<script>
+patch('<script src="precheck.js"></script>', `<script>
 window.fonvLocal = (function () { try { return localStorage.getItem('fonv.offline') === '1' && !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch (e) { return false; } })();
 window.fonvEnv = { FNV_FS_CACHE_MB: window.fonvLocal ? '32' : '__STREAM_CACHE__' };
 </script>
-<script type="module">`, 'Modul-Skript');
+<script src="precheck.js"></script>`, 'precheck.js');
 patch('const env = {};', 'const env = Object.assign({}, window.fonvEnv);', 'env');
 patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät geladen' : 'downloaded'}` + (boot.file", 'Ladeanzeige');
+// Geräte-Check der Spielseite: mit Daten vom Gerät weder die Leitung messen noch vor langsamer Verbindung warnen
+{
+  const f = path.join(www, 'precheck.js');
+  let pc = fs.readFileSync(f, 'utf8');
+  for (const [from, to] of [
+    ["const measured = query.get('start') ? null :", "const measured = (window.fonvLocal || query.get('start')) ? null :"],
+    ['if (info.mbps < 0.6) warn(', 'if (!window.fonvLocal && info.mbps < 0.6) warn('],
+    ['if (info.rttMs > 400) warn(', 'if (!window.fonvLocal && info.rttMs > 400) warn('],
+  ]) {
+    if (!pc.includes(from)) fail(`precheck.js: "${from}" nicht gefunden – tools/assemble.mjs anpassen`);
+    pc = pc.replace(from, to);
+  }
+  fs.writeFileSync(f, pc);
+  for (const ext of ['.br', '.gz']) fs.rmSync(f + ext, { force: true });   // sonst liefert der Server die alte Fassung
+}
 const page = (cache) => game.replace('__STREAM_CACHE__', cache);
 fs.writeFileSync(path.join(www, 'game.html'), page('128'));
 const ipad = opt('--ipad-build');

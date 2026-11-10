@@ -7,7 +7,7 @@ import { overall, runSystemCheck, type CheckItem, type Status } from './systemch
 import { busy, esc, icon, pickFile, toast, when } from './ui';
 import { formatBytes } from './format';
 import { renderDataManager } from './datamanager';
-import { ensureServiceWorker, readState, refreshAppCache, swCall, syncStatus } from './offline';
+import { ensureServiceWorker, overview, readState, refreshAppCache, swCall, syncStatus } from './offline';
 
 type Tab = 'play' | 'saves' | 'data' | 'cheats' | 'admin' | 'system';
 const TABS: { id: Tab; label: string; server: boolean; admin?: boolean }[] = [
@@ -125,8 +125,25 @@ async function renderPlay(v: HTMLElement): Promise<void> {
   });
   // Offline-Daten: Hinweis und Spielstände im Hintergrund abgleichen
   const state = await readState().catch(() => null);
-  if (state?.enabled) {
-    const offl = v.querySelector('#offl')!;
+  const offl = v.querySelector<HTMLElement>('#offl')!;
+  // klar sagen, woher das Spiel seine Daten nimmt: gestreamt lädt jedes Gebiet Hunderte MB vom Server
+  const toData = ' <button class="secondary" id="toData">Spieldaten öffnen</button>';
+  const wire = () => v.querySelector('#toData')?.addEventListener('click', () => document.querySelector<HTMLButtonElement>('[data-tab=data]')?.click());
+  if (!state?.enabled) {
+    offl.innerHTML = '⚠️ <b>Das Spiel wird vom Server gestreamt</b> – Laden dauert dann lange. Einmal aufs Gerät laden macht es schnell.' + toData;
+    wire();
+  } else {
+    const dlcOff = dlc.dlc.filter((d) => !d.enabled).map((d) => d.name.toLowerCase());
+    const ov = await overview(state.quality, dlcOff).catch(() => null);
+    const active = !!navigator.serviceWorker?.controller;
+    if (!active) {
+      offl.innerHTML = '⚠️ Die Daten liegen auf dem Gerät, werden aber gerade nicht benutzt (Service Worker nicht aktiv). Seite einmal neu laden.';
+    } else if (ov && ov.total > 0 && ov.have < ov.total) {
+      offl.innerHTML = `⚠️ Erst <b>${formatBytes(ov.have)} von ${formatBytes(ov.total)}</b> liegen auf dem Gerät – der Rest wird gestreamt (langsam).` + toData;
+      wire();
+    }
+  }
+  if (state?.enabled && !offl.innerHTML) {
     offl.textContent = 'Startet vom Gerät (Datenmanager). Spielstände werden abgeglichen …';
     void swCall<{ ok: boolean; error?: string }>('sync')
       .then(async (r) => {
