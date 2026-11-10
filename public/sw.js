@@ -67,8 +67,9 @@ async function loadState() {
   }
   st = next;
   fileCache.clear();
-  if (st.enabled) await docsInit();
-  else docs.local = false;
+  docs.local = false;
+  // IndexedDB nicht benutzbar (Safari privat, Speicher voll): Spielstände dann direkt über den Server, Rest läuft
+  if (st.enabled) await docsInit().catch((e) => { dbp = null; console.warn('[sw] Spielstand-Speicher nicht lesbar', e); });
   loaded = true;
 }
 
@@ -112,8 +113,11 @@ self.addEventListener('fetch', (e) => {
   }
   if (/\/api\//.test(url.pathname)) return e.respondWith(apiRequest(req));
   if (req.method !== 'GET' || /\.php$/.test(url.pathname)) return;
-  // Seitenaufrufe mit Netz nicht anfassen: nur so fragt der Browser nach Name und Passwort (Verzeichnisschutz)
-  if (req.mode === 'navigate' && self.navigator.onLine) return;
+  if (req.mode === 'navigate') {
+    // nach einem 401 den nächsten Aufruf nicht anfassen: nur dann fragt der Browser nach Name und Passwort
+    if (Date.now() < navBypass) return;
+    return e.respondWith(navRequest(req, url));
+  }
   const t0 = Date.now();
   const entry = [new Date().toISOString().slice(11, 23), 'app', url.pathname, '', 'offen', 0];
   trace.push(entry);
@@ -126,7 +130,8 @@ async function fsRequest(e, op, url) {
   const req = e.request;
   if (!st.enabled) return fetch(req);
   if (op === 'index') {
-    if (docs.local) e.waitUntil(syncSoon(2000));              // Spielstart: Spielstände im Hintergrund abgleichen
+    // Spielstart: Spielstände im Hintergrund abgleichen (jeder Thread des Spiels fragt den Index: nur einmal je Minute)
+    if (docs.local && Date.now() - lastSyncAt > 60000) { lastSyncAt = Date.now(); e.waitUntil(syncSoon(2000)); }
     return st.raw ? r200(st.raw, 'application/json') : fetch(req);
   }
   const p = url.searchParams.get('p') || '';
@@ -147,7 +152,10 @@ async function fsRequest(e, op, url) {
         return r200(await file.slice(o, o + n).arrayBuffer(), 'application/octet-stream');
       }
     }
-    return fetch(req).catch(() => fail(404));                  // noch nicht geladen: vom Server
+    // der Spielordner ist nur lesbar (das Spiel will dort z. B. Warnings.txt löschen): gleich hier ablehnen, statt
+    // dafür den Server zu fragen – ein wackeliges Netz hielte sonst den Start auf
+    if (op !== 'read' || !ix.f[key]) return fail(404);
+    return passFs(req);                                        // noch nicht geladen: vom Server
   }
   const rel = Core.docsRel(p);
   if (rel !== null && docs.local) {
@@ -155,7 +163,19 @@ async function fsRequest(e, op, url) {
     if (pendingFlush) e.waitUntil(pendingFlush);               // geschriebene Daten sichern, bevor der Worker ruht
     return res;
   }
-  return fetch(req).catch(() => fail(404));
+  return passFs(req);
+}
+
+// /fs-Anfrage an den Server. Die Engine wiederholt nur bei Netzfehlern und 5xx (pal_fs_web.cpp); alles andere nimmt
+// sie als endgültig. Deshalb: ohne Netz 404 ("gibt es nicht" - offline soll das Spiel nicht hängen), bei Netz mit
+// Störung 503 (wiederholen), und 401 (Anmeldung verloren) ebenfalls 503, bis die Seite neu angemeldet ist.
+async function passFs(req) {
+  try {
+    const res = await fetch(req);
+    return res.status === 401 ? fail(503, 'Anmeldung verloren') : res;
+  } catch {
+    return fail(self.navigator.onLine ? 503 : 404);
+  }
 }
 
 async function apiRequest(req) {
@@ -168,6 +188,24 @@ async function apiRequest(req) {
     return r;
   } catch {
     return (await (await caches.open(API_CACHE)).match(req)) || offlineJson();
+  }
+}
+
+// Seite selbst: vom Server, wenn er antwortet; sonst (kein Netz, Server nicht erreichbar, 5xx) die Fassung vom Gerät.
+// Meldet der Server 401, leiten wir auf dieselbe Adresse um und lassen den Browser diesen Aufruf selbst machen.
+let navBypass = 0;
+async function navRequest(req, url) {
+  await ready;
+  const cache = await caches.open(APP_CACHE);
+  const key = new URL(url.pathname.endsWith('/') ? url.pathname + 'index.html' : url.pathname, url.origin).href;
+  try {
+    const res = await fetch(req);
+    if (res.status === 401) { navBypass = Date.now() + 15000; return Response.redirect(url.href, 302); }
+    if (res.status >= 500) return (await cache.match(key)) || res;
+    if (st.enabled && res.ok && res.type === 'basic') void cache.put(key, res.clone()).catch(() => undefined);
+    return res;
+  } catch {
+    return (await cache.match(key)) || fail(503, 'Offline und nicht auf diesem Gerät gespeichert');
   }
 }
 
@@ -186,12 +224,12 @@ async function appRequest(req, url) {
   try {
     const res = await fetch(req);
     // Server da, aber Anmeldung abgelaufen o. Ä.: lieber die Fassung vom Gerät (die Seite meldet sich dann selbst)
-    if (res.status >= 500 || (req.mode === 'navigate' && !res.ok)) return (await lookup()) || res;
+    if (res.status >= 500) return (await lookup()) || res;
     // frische Fassung auch fürs Gerät merken, damit die Offline-Kopie nicht veraltet
     if (res.ok && res.type === 'basic' && !req.headers.has('range')) {
       const old = await lookup();
       const same = old && ['last-modified', 'etag', 'content-length'].every((h) => old.headers.get(h) === res.headers.get(h));
-      if (!same) await cache.put(key, res.clone()).catch(() => undefined);
+      if (!same) void cache.put(key, res.clone()).catch(() => undefined);   // nicht abwarten: die Antwort soll gleich los
     }
     return res;
   } catch {
@@ -208,7 +246,7 @@ function db() {
     const r = indexedDB.open('fonv-offline', 1);
     r.onupgradeneeded = () => { r.result.createObjectStore('docs', { keyPath: 'k' }); r.result.createObjectStore('kv'); };
     r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
+    r.onerror = () => { dbp = null; rej(r.error); };
   }));
 }
 function idb(store, mode, fn) {
@@ -377,7 +415,8 @@ let flushTimer = 0, pendingFlush = null, flushDone = null;
 function scheduleFlush() {
   clearTimeout(flushTimer);
   if (!pendingFlush) pendingFlush = new Promise((r) => { flushDone = r; });
-  flushTimer = setTimeout(() => void locked(flushNow), 1000);
+  // Sichern fehlgeschlagen (Speicher kurz gesperrt/voll): Daten bleiben im Puffer, gleich noch einmal
+  flushTimer = setTimeout(() => void locked(flushNow).catch(() => { dbp = null; scheduleFlush(); }), 1000);
 }
 async function flushNow() {
   clearTimeout(flushTimer);
@@ -395,6 +434,7 @@ async function flushNow() {
 }
 
 // ---- Abgleich mit dem Server ("Cloud") ----------------------------------------------------------------------
+let lastSyncAt = 0;
 let syncTimer = 0, syncing = null, lastResult = null, pendingSync = null, syncResolve = null;
 // ein Abgleich kurz nach der letzten Änderung; alle Wartenden bekommen dasselbe Versprechen (keins bleibt offen,
 // sonst gälte der Worker für immer als beschäftigt und eine neue Fassung käme nie an die Reihe)
@@ -418,6 +458,7 @@ async function doSync() {
   const r = { ok: true, downloaded: 0, uploaded: 0, deleted: 0, conflicts: 0, at: now() };
   try {
     await locked(flushNow);
+    await sameUser();
     await pull(r);
     await push(r);
     await kvSet('pulled', true);
@@ -429,6 +470,22 @@ async function doSync() {
   }
   lastResult = r;
   return r;
+}
+// Meldet sich auf diesem Gerät ein anderer Benutzer an, gehören die gespeicherten Spielstände nicht ihm: der
+// Geräte-Speicher wird geleert und vom Server neu gefüllt (sonst landeten fremde Stände in seinem Ordner).
+async function sameUser() {
+  const res = await server('/api/me');
+  if (!res.ok) throw new Error(res.status === 401 ? 'Nicht angemeldet' : 'Server: ' + res.status);
+  const user = (await res.json()).user || '';
+  const owner = await kvGet('owner');
+  if (owner && owner !== user) {
+    await locked(async () => {
+      await idb('docs', 'readwrite', (s) => s.clear());
+      docs.meta.clear(); docs.bufs.clear(); docs.seen = {}; docs.dirty = {};
+      await kvSet('seen', docs.seen); await kvSet('dirty', docs.dirty);
+    });
+  }
+  if (owner !== user) await kvSet('owner', user);
 }
 const server = (path, init) => fetch(path, { credentials: 'same-origin', cache: 'no-store', ...init });
 async function serverFiles(rel, out) {
@@ -465,9 +522,10 @@ async function pull(r) {
   for (const k of plan.download) {
     const f = srv[k];
     const blob = await fetchServerFile(f);
+    // während des Abgleichs vom Spiel neu geschrieben: der eigene Stand gewinnt, nächster Abgleich klärt es
+    if (docs.bufs.has(k) || docs.dirty[k]) continue;
     await locked(() => storeLocal(f.name, blob, f.mtime));
     docs.seen[k] = { srv: f.mtime };
-    delete docs.dirty[k];
     r.downloaded++;
   }
   for (const k of plan.conflict) {
@@ -480,6 +538,7 @@ async function pull(r) {
     r.conflicts++;
   }
   for (const k of plan.deleteLocal) {
+    if (docs.bufs.has(k) || docs.dirty[k]) continue;
     await locked(() => removeLocal(k));
     delete docs.seen[k];
     r.deleted++;
