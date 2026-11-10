@@ -44,7 +44,7 @@ $webDir = $web.TrimEnd('/')
 # mkdir schlägt fehl, wenn der Ordner existiert: diese Zeilen dürfen scheitern.
 function Invoke-WinScp([string[]]$lines, [string]$log, [switch]$Show) {
     $script = (@('option batch abort', 'option confirm off', "open `"$url`" $openArgs") + $lines + 'exit' |
-        ForEach-Object { if ($_ -like 'mkdir*') { "option batch continue`n$_`noption batch abort" } else { $_ } }) -join "`n"
+        ForEach-Object { if ($_ -like 'mkdir*' -or $_ -like 'rm *') { "option batch continue`n$_`noption batch abort" } else { $_ } }) -join "`n"
     $tmp = New-TemporaryFile
     try {
         Set-Content $tmp $script -Encoding UTF8
@@ -72,6 +72,9 @@ $lines = @("mkdir `"$base/fnv-private`"", "mkdir `"$base/fnv-data`"", "mkdir `"$
 if ($web -ne '/') { $lines += "mkdir `"$web`"" }
 $lines += "synchronize remote -criteria=size `"$Up\www`" `"$web`""
 foreach ($rel in $changed) { $lines += "put `"$root$($rel.Replace('/', '\'))`" `"$webDir/$rel`"" }
+# vorkomprimierte Fassungen von Dateien, die tools/assemble.mjs verändert: auf dem Server löschen, sonst liefert
+# Apache weiter die alte .br/.gz aus (darf scheitern, wenn sie schon weg sind)
+foreach ($f in @('precheck.js.br', 'precheck.js.gz')) { if (-not (Test-Path "$root$f")) { $lines += "rm `"$webDir/$f`"" } }
 $lines += "synchronize remote -criteria=size `"$Up\fnv-mobile`" `"$base/fnv-mobile`""
 if ($GameFiles) {
     $lines += "put `"$env:FNV_GAME\FalloutNV.exe`" `"$base/fnv-game/`""
