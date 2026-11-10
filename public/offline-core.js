@@ -37,6 +37,9 @@
     for (var i = 0; i < local.length; i++) have[local[i]] = true;
     for (var k in server) {
       var s = server[k], was = seen[k], d = dirty[k];
+      // eigener, unterbrochener Upload (sw.js push): der halbe Stand auf dem Server ist kein fremder – kein Konflikt,
+      // die Datei wird einfach noch einmal hochgeladen
+      if (was && was.pushing && d === 'w') continue;
       var changed = !was || was.srv !== s.mtime;
       if (!changed) continue;
       if (d === 'w' && have[k]) plan.conflict.push(k);

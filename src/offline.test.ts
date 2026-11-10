@@ -75,6 +75,12 @@ describe('offline-core', () => {
     expect(plan.markDirty).toEqual(['mine.fos']);
   });
 
+  it('eigener unterbrochener Upload ist kein Konflikt', () => {
+    const plan = Core.syncPlan({ 'a.fos': { name: 'a.fos', size: 0, mtime: 99 } }, ['a.fos'], { 'a.fos': { srv: 10, pushing: 1 } }, { 'a.fos': 'w' });
+    expect(plan.conflict).toEqual([]);
+    expect(plan.download).toEqual([]);
+  });
+
   it('erster Abgleich auf leerem Gerät holt alles', () => {
     const plan = Core.syncPlan({ 'x.ini': { name: 'X.ini', size: 1, mtime: 5 } }, [], {}, {});
     expect(plan.download).toEqual(['x.ini']);

@@ -130,6 +130,8 @@ async function fsRequest(e, op, url) {
   const req = e.request;
   if (!st.enabled) return fetch(req);
   if (op === 'index') {
+    // Spielstart: Stand des Geräts neu lesen (seit dem letzten Mal kann der Datenmanager Dateien geladen haben)
+    if (Date.now() - stateReadAt > 10000) { stateReadAt = Date.now(); ready = loadState(); await ready; }
     // Spielstart: Spielstände im Hintergrund abgleichen (jeder Thread des Spiels fragt den Index: nur einmal je Minute)
     if (docs.local && Date.now() - lastSyncAt > 60000) { lastSyncAt = Date.now(); e.waitUntil(syncSoon(2000)); }
     return st.raw ? r200(st.raw, 'application/json') : fetch(req);
@@ -434,7 +436,7 @@ async function flushNow() {
 }
 
 // ---- Abgleich mit dem Server ("Cloud") ----------------------------------------------------------------------
-let lastSyncAt = 0;
+let lastSyncAt = 0, stateReadAt = 0;
 let syncTimer = 0, syncing = null, lastResult = null, pendingSync = null, syncResolve = null;
 // ein Abgleich kurz nach der letzten Änderung; alle Wartenden bekommen dasselbe Versprechen (keins bleibt offen,
 // sonst gälte der Worker für immer als beschäftigt und eine neue Fassung käme nie an die Reihe)
@@ -549,6 +551,7 @@ async function pull(r) {
 }
 const post = (path, body) => server(path, { method: 'POST', body: body || null });
 async function push(r) {
+  try {
   for (const [k, kind] of Object.entries(docs.dirty)) {
     if (kind === 'd') {
       const res = await post('/fs/remove?p=' + enc('/docs/' + k));
@@ -564,6 +567,9 @@ async function push(r) {
     const rec = await idb('docs', 'readonly', (s) => s.get(k));
     const data = new Uint8Array(rec && rec.data ? await rec.data.arrayBuffer() : new ArrayBuffer(0));
     const p = enc('/docs/' + n.name);
+    // Upload vormerken: bricht er ab, hält der nächste Abgleich den halben Stand auf dem Server nicht für fremd
+    docs.seen[k] = { ...(docs.seen[k] || {}), pushing: 1 };
+    await kvSet('seen', docs.seen);
     let res = await post('/fs/truncate?p=' + p);
     if (!res.ok) throw new Error('Server: ' + n.name + ' ' + res.status);
     for (let off = 0; off < data.length; off += CHUNK) {
@@ -573,14 +579,17 @@ async function push(r) {
     const s = await server('/fs/stat?p=' + p);
     const info = s.ok ? await s.json() : null;
     const cur = docs.meta.get(k);
-    if (info && cur && cur.mtime === mtime) {               // inzwischen wieder geändert? dann bleibt es markiert
+    if (info) {
       docs.seen[k] = { srv: info.mtime };
-      delete docs.dirty[k];
+      if (cur && cur.mtime === mtime) delete docs.dirty[k]; // inzwischen wieder geändert? dann bleibt es markiert
+      r.uploaded++;
     }
-    r.uploaded++;
   }
-  await kvSet('seen', docs.seen);
-  await kvSet('dirty', docs.dirty);
+  } finally {
+    // auch nach einem Abbruch festhalten, was schon oben ist
+    await kvSet('seen', docs.seen);
+    await kvSet('dirty', docs.dirty);
+  }
 }
 
 // ---- Nachrichten vom Datenmanager ------------------------------------------------------------------------------
