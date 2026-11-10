@@ -6,6 +6,8 @@ import { loadResults, resetResults, runRemaining, STEPS, type StressResult } fro
 import { overall, runSystemCheck, type CheckItem, type Status } from './systemcheck';
 import { busy, esc, icon, pickFile, toast, when } from './ui';
 import { formatBytes } from './format';
+import { renderDataManager } from './datamanager';
+import { ensureServiceWorker, overview, readState, refreshAppCache, swCall, syncStatus } from './offline';
 
 type Tab = 'play' | 'saves' | 'data' | 'cheats' | 'admin' | 'system';
 const TABS: { id: Tab; label: string; server: boolean; admin?: boolean }[] = [
@@ -65,6 +67,9 @@ async function render(): Promise<void> {
 }
 
 // ---- Spielen -------------------------------------------------------------------------------------------
+// iPad meldet sich in Safari als Mac: an den Touchpunkten erkennen
+const isTablet = () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 async function renderPlay(v: HTMLElement): Promise<void> {
   const [saves, dlc] = await Promise.all([api.get<{ saves: FileEntry[] }>('saves'), api.get<{ dlc: Dlc[] }>('dlc')]);
   const last = saves.saves[0];
@@ -73,14 +78,82 @@ async function renderPlay(v: HTMLElement): Promise<void> {
     <section class="hero">
       <h1>Willkommen zurück${me?.user ? ', ' + esc(me.user) : ''}.</h1>
       <p class="muted">${last ? `Letzter Spielstand: <b>${esc(last.name.replace(/\.fos$/i, ''))}</b> · ${when(last.mtime)}` : 'Noch kein Spielstand – Zeit für ein neues Spiel.'}</p>
-      <a class="btn big" href="./game.html">${icon('play')} Spiel starten</a>
-      <p class="hint">Im Spiel oben in der Mitte: ☰ für Cheats und zurück zur App.</p>
+      <a class="btn big" id="playBtn" href="./game.html">${icon('play')} Spiel starten</a>
+      <div class="row wrap"><span class="muted">Anzeige:</span><div class="seg" id="disp">
+        <button data-d="fullscreen">Vollbild</button><button data-d="window">Fenster</button><button data-d="classic">Mit Leiste</button></div></div>
+      <div class="row wrap"><span class="muted">Version:</span><div class="seg" id="variant">
+        <button data-d="auto">Automatisch</button><button data-d="pc">PC</button><button data-d="ipad">iPad</button></div></div>
+      <p class="hint">Menü im Spiel (Cheats, Anzeige, zurück zur App): am PC Taste F8, am iPad den Knopf ☰ oben in der Mitte antippen.</p>
+      <p class="hint" id="offl"></p>
     </section>
     <div class="grid">
       <div class="card stat"><b>${saves.saves.length}</b><span>Spielstände</span></div>
       <div class="card stat"><b>${on}/${dlc.dlc.length}</b><span>DLCs aktiv</span></div>
       <div class="card stat"><b>${cheatLabel() ? 'An' : 'Aus'}</b><span>Cheats</span></div>
     </div>`;
+  // Anzeige im Spiel (public/addons.js liest fonv.display)
+  const disp = v.querySelector<HTMLElement>('#disp')!;
+  const paintDisp = () => {
+    let d = 'fullscreen';
+    try { d = localStorage.getItem('fonv.display') || d; } catch { /* egal */ }
+    disp.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.classList.toggle('on', b.dataset.d === d));
+  };
+  disp.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    try { localStorage.setItem('fonv.display', b.dataset.d!); } catch { /* egal */ }
+    paintDisp();
+  });
+  paintDisp();
+  // Version: iPad = game-ipad.html (weniger Threads und Speicher, pc/build.ps1); Automatisch nimmt sie auf Tablets/Handys
+  const variantEl = v.querySelector<HTMLElement>('#variant')!;
+  const getVariant = () => { try { return localStorage.getItem('fonv.variant') || 'auto'; } catch { return 'auto'; } };
+  const paintVariant = () => variantEl.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.classList.toggle('on', b.dataset.d === getVariant()));
+  variantEl.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    try { localStorage.setItem('fonv.variant', b.dataset.d!); } catch { /* egal */ }
+    paintVariant();
+  });
+  paintVariant();
+  v.querySelector('#playBtn')!.addEventListener('click', async (e) => {
+    const want = getVariant() === 'ipad' || (getVariant() === 'auto' && isTablet());
+    if (!want) return;
+    e.preventDefault();
+    const ok = await fetch('./game-ipad.html', { method: 'HEAD', cache: 'no-store' }).then((r) => r.ok, () => true);   // ohne Netz: die Offline-Kopie hat sie
+    location.href = ok ? './game-ipad.html' : './game.html';
+  });
+  // Offline-Daten: Hinweis und Spielstände im Hintergrund abgleichen
+  const state = await readState().catch(() => null);
+  const offl = v.querySelector<HTMLElement>('#offl')!;
+  // klar sagen, woher das Spiel seine Daten nimmt: gestreamt lädt jedes Gebiet Hunderte MB vom Server
+  const toData = ' <button class="secondary" id="toData">Spieldaten öffnen</button>';
+  const wire = () => v.querySelector('#toData')?.addEventListener('click', () => document.querySelector<HTMLButtonElement>('[data-tab=data]')?.click());
+  if (!state?.enabled) {
+    offl.innerHTML = '⚠️ <b>Das Spiel wird vom Server gestreamt</b> – Laden dauert dann lange. Einmal aufs Gerät laden macht es schnell.' + toData;
+    wire();
+  } else {
+    const dlcOff = dlc.dlc.filter((d) => !d.enabled).map((d) => d.name.toLowerCase());
+    const ov = await overview(state.quality, dlcOff).catch(() => null);
+    const active = !!navigator.serviceWorker?.controller;
+    if (!active) {
+      offl.innerHTML = '⚠️ Die Daten liegen auf dem Gerät, werden aber gerade nicht benutzt (Service Worker nicht aktiv). Seite einmal neu laden.';
+    } else if (ov && ov.total > 0 && ov.have < ov.total) {
+      offl.innerHTML = `⚠️ Erst <b>${formatBytes(ov.have)} von ${formatBytes(ov.total)}</b> liegen auf dem Gerät – der Rest wird gestreamt (langsam).` + toData;
+      wire();
+    }
+  }
+  if (state?.enabled && !offl.innerHTML) {
+    offl.textContent = 'Startet vom Gerät (Datenmanager). Spielstände werden abgeglichen …';
+    void swCall<{ ok: boolean; error?: string }>('sync')
+      .then(async (r) => {
+        const s = await syncStatus();
+        offl.textContent = r.ok
+          ? `Startet vom Gerät. Spielstände abgeglichen${s?.lastSync ? ' ' + when(s.lastSync) : ''}.`
+          : `Startet vom Gerät. Spielstände: ${r.error ?? 'nicht abgeglichen'} – sie bleiben auf dem Gerät und werden später hochgeladen.`;
+      })
+      .catch(() => { offl.textContent = 'Startet vom Gerät.'; });
+  }
 }
 
 // ---- Spielstände + Backups -----------------------------------------------------------------------------
@@ -168,20 +241,17 @@ async function renderData(v: HTMLElement): Promise<void> {
           <label class="switch"><input type="checkbox" data-dlc="${esc(d.name)}" ${d.enabled ? 'checked' : ''}/><span></span></label></li>`)
         .join('')}</ul>` : '<p class="muted">Keine DLCs auf dem Server gefunden.</p>'}
     </section>
-    <section class="card">
-      <h2>Spieldaten auf diesem Gerät</h2>
-      <p class="muted">Die Spieldaten kommen vom Server. Was einmal geladen wurde, hält der Browser im Zwischenspeicher. Eine vollständige Offline-Kopie mit eigener Verwaltung folgt nach dem ersten erfolgreichen Spielstart.</p>
-      <div id="quota" class="muted"></div>
-    </section>`;
+    <div id="dmHost"></div>`;
   v.querySelectorAll<HTMLInputElement>('[data-dlc]').forEach((cb) =>
     cb.addEventListener('change', async () => {
       const ok = await busy(null, () => api.post('dlc', { name: cb.dataset.dlc, enabled: cb.checked }));
       if (ok) toast(`${prettyDlc(cb.dataset.dlc!)}: ${cb.checked ? 'an' : 'aus'}`);
       else cb.checked = !cb.checked;
+      const d = dlc.find((x) => x.name === cb.dataset.dlc);
+      if (ok && d) { d.enabled = cb.checked; void renderDataManager(v.querySelector('#dmHost')!, dlc); }
     }),
   );
-  const est = await navigator.storage?.estimate?.().catch(() => undefined);
-  if (est) view().querySelector('#quota')!.textContent = `Belegt auf diesem Gerät: ${formatBytes(est.usage)} von ${formatBytes(est.quota)}.`;
+  await renderDataManager(v.querySelector('#dmHost')!, dlc);
 }
 
 const DLC_NAMES: Record<string, string> = {
@@ -391,6 +461,7 @@ function renderSystem(v: HTMLElement): void {
 // ---- Start ---------------------------------------------------------------------------------------------
 async function start(): Promise<void> {
   const found = await detectServer();
+  if (found && 'status' in found && found.status === 401) return relogin();
   if (found && 'status' in found) {
     // eigener Server, aber die PHP-Schnittstelle antwortet nicht richtig: klar sagen statt Diagnose-Seite
     app.innerHTML = `<main class="center"><div class="card error" style="max-width:640px">
@@ -402,19 +473,26 @@ async function start(): Promise<void> {
     return;
   }
   me = found;
-  if (me && !me.user) {
-    // Server erreichbar, aber (noch) nicht angemeldet: Seite neu laden lässt Safari nach dem Passwort fragen
-    app.innerHTML = '<main class="center"><div class="card"><h2>Bitte anmelden</h2><p class="muted">Lade die Seite neu und gib Name und Passwort ein.</p><button onclick="location.reload()">Neu laden</button></div></main>';
-    return;
-  }
+  if (me && !me.user) return relogin();
   try {
     const saved = localStorage.getItem('fonv.tab') as Tab | null;
     if (saved && TABS.some((t) => t.id === saved)) tab = saved;
   } catch { /* egal */ }
   shell();
   if (me?.mustChangePassword) passwordDialog(true);
-  // Offline-Fähigkeit nur für die Diagnose-Version (GitHub Pages). Auf dem eigenen Server setzt Apache die
-  // Header, und ein Service Worker würde die vielen Spieldaten-Anfragen nur ausbremsen.
+  // Eigener Server: Service Worker nur, wenn der Datenmanager Daten auf dieses Gerät geladen hat (src/offline.ts).
+  if (me && import.meta.env.PROD) {
+    try {
+      if (localStorage.getItem('fonv.offline') === '1') {
+        // mit Netz: App-Dateien auf dem Gerät aktuell halten (sonst liefe offline eine alte Fassung)
+        void ensureServiceWorker()
+          .then(() => (navigator.onLine ? refreshAppCache() : false))
+          .then((updated) => { if (updated) toast('Offline-Kopie der App aktualisiert'); })
+          .catch(() => undefined);
+      }
+    } catch { /* egal */ }
+  }
+  // Diagnose-Version (GitHub Pages): Service Worker setzt die COOP/COEP-Header.
   if (!me && 'serviceWorker' in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.register('./sw.js').then(() => {
       if (!crossOriginIsolated && !sessionStorage.getItem('coi-reload')) {
@@ -425,7 +503,16 @@ async function start(): Promise<void> {
   }
 }
 
+// Anmeldung verloren (z. B. Netzwerk gewechselt): nach ein paar Sekunden neu laden – am Cache vorbei (?login=…), damit
+// der Browser wieder nach Name und Passwort fragt statt nur "Unauthorized" zu zeigen
+function relogin(): void {
+  app.innerHTML = '<main class="center"><div class="card"><h2>Anmeldung nötig</h2><p class="muted">Du wirst gleich zur Anmeldung weitergeleitet …</p><button id="relogin">Jetzt anmelden</button></div></main>';
+  const go = () => location.replace('./?login=' + Date.now());
+  app.querySelector('#relogin')!.addEventListener('click', go);
+  setTimeout(go, 3000);
+}
+
 void start().catch((e) => {
-  if (e instanceof ApiError && e.status === 401) location.reload();
+  if (e instanceof ApiError && e.status === 401) relogin();
   else app.textContent = String(e);
 });

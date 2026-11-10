@@ -101,15 +101,45 @@ Prüfwert; Claude hat es dir im Chat gegeben). `fs-config.php` und `.htaccess` w
 |---|---|
 | **Spielen** | Spiel starten, letzter Spielstand, Überblick |
 | **Spielstände** | Liste, Herunterladen, Hochladen, Löschen; **Backups** als ZIP anlegen, herunterladen, einspielen, wiederherstellen (vorher automatische Sicherheitskopie) |
-| **Spieldaten** | **DLCs einzeln an/aus** (pro Spieler), Speicherbelegung auf dem Gerät |
+| **Spieldaten** | **DLCs einzeln an/aus** (pro Spieler); **Datenmanager**: Spiel aufs Gerät laden (offline spielen), Spielstände in der Cloud |
 | **Cheats** | Freischalten mit Cheat-Passwort; im Spiel dann über **☰** |
 | **Admin** | Spieler-Zugänge (anlegen, Passwort zurücksetzen, Admin-Rechte, löschen), Cheat-Passwörter |
 | **Diagnose** | Systemcheck und Belastungstest |
 
-**Im Spiel:** standardmäßig **randlos** (Bild füllt den Bildschirm, keine Leisten). Winziger **☰**-Knopf oben in
-der Mitte: Zur App · Vollbild · Randlos/Mit Leiste · Cheats (Gott-Modus, Durch Wände, Heilen, Kronkorken,
-Erfahrung, Tragkraft, Kartenorte, Unentdeckt, KI anhalten, eigener Konsolenbefehl). Touch-Steuerung des Spiels
-bleibt unverändert.
+**Anzeige** (unter „Spielen“ wählbar, auch im Spiel-Menü): **Vollbild** (ab dem ersten Tippen/Klicken),
+**Fenster** (randlos, ohne Leisten und Knöpfe) oder **Mit Leiste** (Originalseite). **Menü im Spiel:** Taste **F8**
+(oder Maus an den oberen Rand, dann ☰), am iPad den Knopf **☰** oben in der Mitte antippen: Zur App · Anzeige · Cheats (Gott-Modus, Durch Wände,
+Heilen, Kronkorken, Erfahrung, Tragkraft, Kartenorte, Unentdeckt, KI anhalten, eigener Konsolenbefehl).
+**Eingabe:** Tastatur geht immer – auch am iPad mit Tastatur und zusammen mit Touch; Maus/Trackpad ebenso. Die
+Touch-Steuerung (Stick und Knöpfe) lässt sich im ☰-Menü aus- und einschalten.
+Am iPad blendet sie sich von selbst aus, sobald du Tastatur oder Maus/Trackpad benutzt, und wieder ein, wenn du das
+Bild mit dem Finger berührst. **In Menüs** (Hauptmenü, Pip-Boy, Dialoge) klickt ein Fingertipp genau dort, wo du
+tippst, und der Spielzeiger folgt Maus/Trackpad exakt (gilt für die GOG-Fassung 1.4.0.525).
+**iPad-Qualität:** `game-ipad.html` benutzt immer die kleinen Archive („Niedrig“) – mit „Hoch“ schließt iPadOS den
+Tab wegen Speichermangel.
+**Diagnose:** Die Spielseite schreibt alle paar Sekunden ihren Zustand nach `fnv-data/users/<Name>/FONV-Diagnose/`
+(eigener Server). Schließt der Browser den Tab, zeigt die letzte Zeile, was das Spiel gerade tat.
+**Tempo:** Apache prüft das Passwort bei jeder Anfrage. Die App speichert Passwörter deshalb mit bcrypt-Stufe 6 und
+stellt ältere (Stufe 12, ~0,2 s je Anfrage) beim nächsten Öffnen der App automatisch um.
+Geht die Anmeldung verloren (z. B. nach einem Netzwechsel), leiten App und Spiel nach ein paar Sekunden
+selbst zur Anmeldung weiter.
+
+**Spielstände** speichert das Spiel auf dem Server (`fnv-data/<Spieler>`), sie erscheinen unter „Spielstände“.
+
+### Offline spielen (Datenmanager, Tab „Spieldaten“)
+
+- **Herunterladen** lädt das Spiel einmal aufs Gerät: Qualität **Hoch** (PC, ~10 GB mit DLCs) oder **Niedrig**
+  (iPad, ~7 GB), dazu die eingeschalteten DLCs. Anhalten/Fortsetzen jederzeit, auch nach Abbruch der Verbindung.
+- Danach startet das Spiel **vom Gerät**: keine Wartezeit auf den Server, kaum Latenz, und es läuft **ohne Internet**.
+- **Spielstände in der Cloud:** werden auf dem Gerät gespeichert und im Hintergrund mit dem Server abgeglichen
+  (nach dem Speichern hochgeladen, beim App-Start geholt). Haben zwei Geräte denselben Spielstand geändert, bleiben
+  beide erhalten (der vom Server als „… (Cloud Datum)“).
+- **Das Netz stört nicht mehr:** Spieldaten, App, Shader und Spielstände kommen vom Gerät; die Ladeanzeige sagt dann
+  „vom Gerät geladen“. Fällt der Server aus oder wechselt das Netz, läuft das Spiel weiter (lokal geprüft: Start mit
+  abgeschaltetem Server, 0 Anfragen für Spieldaten).
+- **Vom Gerät löschen** lädt vorher offene Spielstände hoch; auf dem Server ändert sich nichts.
+- Vorher prüft die App selbst, ob der Browser das kann. iPad: App über Teilen → **Zum Home-Bildschirm** öffnen,
+  sonst darf Safari die Daten nach einiger Zeit löschen.
 
 Jeder Spieler hat **eigene Spielstände, Backups und DLC-Einstellungen**.
 
@@ -118,10 +148,12 @@ Jeder Spieler hat **eigene Spielstände, Backups und DLC-Einstellungen**.
 
 ## Noch nicht fertig
 
-- **Lokale Kopie der Spieldaten** auf dem iPad mit eigener Verwaltung: folgt nach dem ersten erfolgreichen
-  Spielstart (braucht einen Test, ob Safari die Datei-Anfragen des Spiels über einen Service Worker umleiten lässt).
-  Bis dahin hält der Browser-Cache geladene Daten.
-- **iPad-Variante des Builds** (weniger Threads/Speicher), siehe `docs/spikes/S2-ipad-belastung.md`.
+- **Offline auf dem iPad:** in Chrome geprüft; ob Safari die Datei-Anfragen des Spiels über den Service Worker
+  leitet, zeigt der Selbsttest im Datenmanager (sonst meldet er es und lädt nichts).
+- **iPad-Variante auf echtem Gerät:** `game-ipad.html` (24 statt 64 vorab gestartete Threads, 2560 statt 3072 MiB
+  fester Speicher, kleiner Block-Cache) läuft in Chrome am PC; auf dem iPad selbst ist sie noch nicht geprüft.
+  Die App wählt sie auf Tablets automatisch („Spielen“ → Version: Automatisch / PC / iPad). Werte ändern:
+  `$env:FNV_IPAD_POOL`, `$env:FNV_IPAD_MEMORY` vor `build.ps1` (2048 MiB reichen nicht: „OOM“ beim Laden).
 
 ---
 

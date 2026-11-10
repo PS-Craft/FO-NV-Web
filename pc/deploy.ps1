@@ -7,6 +7,8 @@
 # verschlüsselt für dein Windows-Konto in pc\deploy.password.xml gespeichert (nie committet).
 # fnv-private\.htpasswd (Startzugang "admin") wird nur hochgeladen, wenn es auf dem Server noch keine gibt –
 # später angelegte Zugänge und Passwörter werden also nie überschrieben.
+# pc\deploy.state.json (nie committet) merkt sich die Prüfsummen der hochgeladenen Dateien: geänderte Dateien gleicher
+# Länge (neu gebautes fnv_web.wasm, index.html …) übersieht der Größenabgleich sonst.
 param([switch]$GameFiles)
 $ErrorActionPreference = 'Stop'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -26,46 +28,76 @@ $proto = ([string]$cfg.protocol).ToLower()
 if ($proto -eq 'ftps' -and [int]$cfg.port -eq 21) { $proto = 'ftpes' }
 if ($proto -notin @('sftp', 'ftpes', 'ftps')) { throw "protocol muss sftp, ftpes oder ftps sein (unverschlüsseltes ftp wird nicht benutzt)" }
 $url = '{0}://{1}:{2}@{3}:{4}/' -f $proto, [uri]::EscapeDataString($cfg.user), [uri]::EscapeDataString($pw), $cfg.host, $cfg.port
-$openArgs = if ($proto -eq 'sftp') { '-hostkey=*' } else { '' }
+# SFTP: Fingerabdruck des Servers aus deploy.local.json ("hostKey": "ssh-ed25519 255 ..."), damit sich niemand
+# dazwischenschalten kann. Ohne Angabe wird jeder Schlüssel angenommen (Warnung). FTPS prüft das TLS-Zertifikat.
+$openArgs = ''
+if ($proto -eq 'sftp') {
+    if ([string]$cfg.hostKey) { $openArgs = "-hostkey=`"$($cfg.hostKey)`"" }
+    else { $openArgs = '-hostkey=*'; Write-Warning 'SFTP ohne "hostKey" in deploy.local.json: der Server-Schlüssel wird nicht geprüft.' }
+}
 # remoteBase = Pfad, wie der FTP-Zugang ihn sieht ('/' = sein Startordner)
 $base = ([string]$cfg.remoteBase).TrimEnd('/')
 $web = if ([string]$cfg.webFolder) { "$base/$($cfg.webFolder.Trim('/'))" } else { if ($base) { $base } else { '/' } }
+$webDir = $web.TrimEnd('/')
 
+# WinSCP-Skript ausführen. Die Skriptdatei enthält das Passwort: sie wird in jedem Fall wieder gelöscht.
+# mkdir schlägt fehl, wenn der Ordner existiert: diese Zeilen dürfen scheitern.
+function Invoke-WinScp([string[]]$lines, [string]$log, [switch]$Show) {
+    $script = (@('option batch abort', 'option confirm off', "open `"$url`" $openArgs") + $lines + 'exit' |
+        ForEach-Object { if ($_ -like 'mkdir*' -or $_ -like 'rm *') { "option batch continue`n$_`noption batch abort" } else { $_ } }) -join "`n"
+    $tmp = New-TemporaryFile
+    try {
+        Set-Content $tmp $script -Encoding UTF8
+        $a = @('/ini=nul', "/script=$tmp"); if ($log) { $a += "/log=$log" }
+        # Fortschritt gleich zeigen; die Zeile mit der Adresse (enthält das Passwort) nie ausgeben
+        $out = & $winscp @a | ForEach-Object { $l = "$_"; if ($l -notmatch '://') { if ($Show) { Write-Host $l }; $l } }
+        return @{ code = $LASTEXITCODE; out = @($out) }
+    } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+}
+
+# Prüfsummen: was hat sich seit dem letzten Hochladen geändert? (shader\: Namen sind Prüfsummen, ändern sich nie)
+$stateFile = Join-Path $Here 'deploy.state.json'
+$old = @{}
+if (Test-Path $stateFile) { (Get-Content $stateFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $old[$_.Name] = $_.Value } }
+$new = @{}; $changed = @()
+$root = (Resolve-Path "$Up\www").Path.TrimEnd('\') + '\'
+Get-ChildItem $root -Recurse -File -Force | Where-Object { $_.FullName -notmatch '\\shader\\' } | ForEach-Object {
+    $rel = $_.FullName.Substring($root.Length).Replace('\', '/')
+    $new[$rel] = (Get-FileHash $_.FullName -Algorithm SHA1).Hash
+    if ($old[$rel] -ne $new[$rel]) { $changed += $rel }
+}
+
+$lines = @("mkdir `"$base/fnv-private`"", "mkdir `"$base/fnv-data`"", "mkdir `"$base/fnv-cache`"", "mkdir `"$base/fnv-mobile`"", "mkdir `"$base/fnv-game`"")
 # mkdir "/" bricht die FTP-Sitzung ab, der Stamm existiert immer
-$webMkdir = if ($web -ne '/') { @("mkdir `"$web`"") } else { @() }
-$lines = @(
-    'option batch abort', 'option confirm off',
-    "open `"$url`" $openArgs",
-    "mkdir `"$base/fnv-private`"", "mkdir `"$base/fnv-data`"", "mkdir `"$base/fnv-cache`"", "mkdir `"$base/fnv-mobile`"", "mkdir `"$base/fnv-game`""
-    )
-$lines += $webMkdir
+if ($web -ne '/') { $lines += "mkdir `"$web`"" }
 $lines += "synchronize remote -criteria=size `"$Up\www`" `"$web`""
+foreach ($rel in $changed) { $lines += "put `"$root$($rel.Replace('/', '\'))`" `"$webDir/$rel`"" }
 $lines += "synchronize remote -criteria=size `"$Up\fnv-mobile`" `"$base/fnv-mobile`""
 if ($GameFiles) {
     $lines += "put `"$env:FNV_GAME\FalloutNV.exe`" `"$base/fnv-game/`""
+    # Fallout_default.ini & Co.: ohne sie startet das Spiel mit falschen Speicher-Vorgaben und stürzt beim Laden ab (OOM)
+    $lines += "put `"$env:FNV_GAME\*.ini`" `"$base/fnv-game/`""
     $lines += "mkdir `"$base/fnv-game/Data`""
     $lines += "synchronize remote -criteria=size `"$env:FNV_GAME\Data`" `"$base/fnv-game/Data`""
 }
-$lines += 'exit'
-# mkdir schlägt fehl, wenn der Ordner existiert: diese Zeilen dürfen scheitern
-$script = ($lines | ForEach-Object { if ($_ -like 'mkdir*') { "option batch continue`n$_`noption batch abort" } else { $_ } }) -join "`n"
-$tmp = New-TemporaryFile
-Set-Content $tmp $script -Encoding UTF8
-Write-Host "Lade hoch nach $($cfg.host):$base …" -ForegroundColor Cyan
-& $winscp /ini=nul /log="$Here\deploy.log" /script="$tmp"
-$code = $LASTEXITCODE
-Remove-Item $tmp
-if ($code -ne 0) { throw "Upload fehlgeschlagen (siehe pc\deploy.log)" }
+Write-Host "Lade hoch nach $($cfg.host):$base … ($($changed.Count) geänderte Dateien)" -ForegroundColor Cyan
+$r = Invoke-WinScp $lines "$Here\deploy.log" -Show
+if ($r.code -ne 0) { throw "Upload fehlgeschlagen (siehe pc\deploy.log)" }
+$new | ConvertTo-Json | Set-Content $stateFile -Encoding UTF8
 
-# Startzugang nur, wenn noch keine Benutzerliste existiert
-$check = "option batch abort`nopen `"$url`" $openArgs`nstat `"$base/fnv-private/.htpasswd`"`nexit"
-$tmp = New-TemporaryFile; Set-Content $tmp $check -Encoding UTF8
-& $winscp /ini=nul /script="$tmp" | Out-Null
-$exists = $LASTEXITCODE -eq 0; Remove-Item $tmp
-if (-not $exists) {
-    $tmp = New-TemporaryFile
-    Set-Content $tmp "option batch abort`nopen `"$url`" $openArgs`nput `"$Up\fnv-private\.htpasswd`" `"$base/fnv-private/.htpasswd`"`nexit" -Encoding UTF8
-    & $winscp /ini=nul /script="$tmp"; Remove-Item $tmp
+# vorkomprimierte Fassungen von Dateien, die tools/assemble.mjs verändert: auf dem Server löschen, sonst liefert
+# Apache weiter die alte .br/.gz aus. Eigener Lauf, Ergebnis egal: sind sie schon weg, meldet WinSCP einen Fehler.
+$stale = @('precheck.js.br', 'precheck.js.gz') | Where-Object { -not (Test-Path "$root$_") } | ForEach-Object { "rm `"$webDir/$_`"" }
+if ($stale) { [void](Invoke-WinScp (@('option batch continue') + $stale)) }
+
+# Startzugang nur, wenn noch keine Benutzerliste existiert. "Nicht gefunden" gilt nur, wenn die Verbindung steht und
+# der Ordner lesbar ist – ein Verbindungsfehler darf die echte Benutzerliste nie mit dem Startzugang überschreiben.
+$r = Invoke-WinScp @('option batch continue', "stat `"$base/fnv-private`"", "stat `"$base/fnv-private/.htpasswd`"")
+$stats = @($r.out | Where-Object { $_ -match '^\s*[-dl][-rwxsStT]{9}' })      # Zeilen einer gelungenen Abfrage
+if (-not ($stats | Where-Object { $_ -match 'fnv-private\s*$' })) { throw 'Konnte fnv-private auf dem Server nicht prüfen – Benutzerliste nicht angefasst. Bitte erneut starten.' }
+if (-not ($stats | Where-Object { $_ -match '\.htpasswd\s*$' })) {
+    $r = Invoke-WinScp @("put `"$Up\fnv-private\.htpasswd`" `"$base/fnv-private/.htpasswd`"")
+    if ($r.code -ne 0) { throw 'Startzugang konnte nicht hochgeladen werden.' }
     Write-Host 'Startzugang "admin" angelegt.' -ForegroundColor Yellow
 }
 Write-Host 'Fertig.' -ForegroundColor Green

@@ -10,6 +10,7 @@
   "dlcDefault": true,
   "_erklaerung": {
     "protocol": "ftps (Port 21 = explizites TLS, all-inkl) oder sftp (nur mit SSH-Zugang)",
+    "hostKey": "nur bei sftp, optional: Fingerabdruck des Servers (z. B. 'ssh-ed25519 255 AbC…'), damit der Schlüssel geprüft wird",
     "remoteBase": "Pfad, wie der FTP-Zugang ihn sieht – meist '/' (sein Startordner)",
     "serverBase": "DERSELBE Ordner als absoluter Server-Pfad: /www/htdocs/<Account> + Startordner des FTP-Zugangs",
     "webFolder": "Ordner, auf den die (Sub-)Domain zeigt, relativ zu remoteBase. Leer nur, wenn die Domain direkt auf den Startordner zeigt"

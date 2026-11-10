@@ -29,6 +29,8 @@ function send_file(string $path, string $name, string $type = 'application/octet
 }
 
 $route = trim((string)($_GET['r'] ?? ''), '/');
+// Rückfall, falls der Server /api/<route> nicht zu api.php?r=<route> umschreibt (z. B. bei MultiViews/PATH_INFO)
+if ($route === '' && preg_match('~/api(?:\.php)?/([a-z/]+)$~', (string)parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH), $m)) $route = trim($m[1], '/');
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 if ($method === 'POST' && ($_SERVER['HTTP_X_FONV'] ?? '') !== '1') fail(403, 'Anfrage ohne App-Kennung abgelehnt');
 
@@ -36,6 +38,7 @@ $users = htpasswd_read();
 
 $me = current_user();
 if ($route === 'me') {
+    if ($me !== null) speed_up_hash($me);     // einmalig: teuren Passwort-Hash auf die schnelle Stufe umstellen
     reply(200, ['user' => $me, 'admin' => is_admin($me), 'mustChangePassword' => must_change($me),
                 'zip' => class_exists('ZipArchive'), 'perUser' => (bool)cfg()['per_user']]);
 }

@@ -154,6 +154,8 @@ function realGamePath(array $ctx, string $key): ?string {
 // ---- Anfrage --------------------------------------------------------------------------------------------
 $ctx = ['game' => $GAME, 'data' => $DATA, 'mobile' => $MOBILE, 'cache' => $CACHE, 'dlc' => $DLC];
 $op = (string)($_GET['op'] ?? '');
+// Rückfall, falls der Server /fs/<op> nicht zu fs.php?op=<op> umschreibt
+if ($op === '' && preg_match('~/fs(?:\.php)?/([a-z]+)$~', (string)parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH), $m)) $op = $m[1];
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($op === 'index') out(200, gameIndex($GAME, $MOBILE, $DLC, $CACHE)['raw'], 'application/json', 'no-cache');

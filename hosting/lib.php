@@ -65,7 +65,41 @@ function htpasswd_write(array $users): void {
     @chmod($tmp, 0644);   // Apache muss sie lesen können
     rename($tmp, $f);
 }
-function hash_password(string $pw): string { return password_hash($pw, PASSWORD_BCRYPT); }
+// Apache prüft das Passwort bei JEDER Anfrage neu (jede Datei, jeder Datenblock des Spiels). Mit PHPs Standard
+// (bcrypt-Stufe 12) kostet das auf geteiltem Webspace ~0,2 s pro Anfrage – ein Spielstart macht Tausende davon.
+// Stufe 6 braucht wenige Millisekunden. Die Datei liegt außerhalb des Web-Zugriffs (fnv-private, per .htaccess gesperrt).
+const HASH_COST = 6;
+function hash_password(string $pw): string { return password_hash($pw, PASSWORD_BCRYPT, ['cost' => HASH_COST]); }
+
+/** Name und Passwort aus der Basic-Auth-Anmeldung dieser Anfrage, oder null */
+function basic_credentials(): ?array {
+    $u = $_SERVER['PHP_AUTH_USER'] ?? null;
+    $p = $_SERVER['PHP_AUTH_PW'] ?? null;
+    if ($u === null || $p === null) {
+        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        if (stripos($h, 'basic ') === 0) {
+            $dec = base64_decode(substr($h, 6), true);
+            if ($dec !== false && str_contains($dec, ':')) [$u, $p] = explode(':', $dec, 2);
+        }
+    }
+    return ($u === null || $p === null) ? null : [(string)$u, (string)$p];
+}
+
+/**
+ * Bestehende, teuer gehashte Passwörter beim Anmelden auf die schnelle Stufe umstellen (das Passwort selbst bleibt
+ * gleich). Geht nur hier: nur während einer Anmeldung kennt der Server das Passwort im Klartext.
+ */
+function speed_up_hash(string $user): bool {
+    $c = basic_credentials();
+    if ($c === null || $c[0] !== $user) return false;
+    $users = htpasswd_read();
+    $hash = $users[$user] ?? '';
+    if (!preg_match('/^\$2[aby]\$(\d\d)\$/', $hash, $m) || (int)$m[1] <= HASH_COST) return false;
+    if (!password_verify($c[1], $hash)) return false;
+    $users[$user] = hash_password($c[1]);
+    htpasswd_write($users);
+    return true;
+}
 
 /**
  * Rollen: wer Admin ist, wer sein Passwort noch ändern muss. Fehlt die Datei (frisch installiert mit dem
@@ -89,15 +123,7 @@ function current_user(): ?string {
     foreach (['REMOTE_USER', 'REDIRECT_REMOTE_USER'] as $k) {
         if (!empty($_SERVER[$k]) && valid_user((string)$_SERVER[$k])) return $user = (string)$_SERVER[$k];
     }
-    $u = $_SERVER['PHP_AUTH_USER'] ?? null;
-    $p = $_SERVER['PHP_AUTH_PW'] ?? null;
-    if ($u === null) {
-        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
-        if (stripos($h, 'basic ') === 0) {
-            $dec = base64_decode(substr($h, 6), true);
-            if ($dec !== false && str_contains($dec, ':')) [$u, $p] = explode(':', $dec, 2);
-        }
-    }
+    [$u, $p] = basic_credentials() ?? [null, null];
     if ($u === null || $p === null || !valid_user($u)) return $user = null;
     $hash = htpasswd_read()[$u] ?? null;
     return $user = ($hash !== null && password_verify($p, $hash)) ? $u : null;

@@ -9,15 +9,19 @@
 //   fnv-private/.htpasswd   nur beim ersten Mal: Zugang "admin" mit dem Startpasswort
 //
 // node tools/assemble.mjs --recomp <out/dist> --app <dist> --out <upload> --server-base </www/htdocs/w0123456>
-//                         [--web-folder fnv-www] [--dlc] [--init-private]
+//                         [--web-folder fnv-www] [--dlc] [--init-private] [--ipad-build <web_browser_ipad>]
+//
+// --ipad-build:  zweiter Emscripten-Build mit weniger Threads/Speicher (pc/build.ps1) -> build-ipad/ + game-ipad.html
 //
 // --server-base: ABSOLUTER Pfad auf dem Server (wie PHP/Apache ihn sehen), unter dem fnv-private/ usw. liegen.
 //                Nur die .htaccess braucht ihn (AuthUserFile). Bei all-inkl: /www/htdocs/<account>/<FTP-Startordner>.
 // --web-folder:  Ordner der (Sub-)Domain relativ dazu ('' = die Domain zeigt direkt auf server-base).
 // fs-config.php rechnet alle Pfade selbst relativ zu ihrem eigenen Ordner aus (__DIR__) – unabhängig vom FTP-Pfad.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -43,12 +47,64 @@ fs.cpSync(recomp, www, { recursive: true });
 for (const ext of ['', '.gz', '.br']) fs.rmSync(path.join(www, 'index.html' + ext), { force: true });
 let game = fs.readFileSync(path.join(recomp, 'index.html'), 'utf8');
 if (!game.includes('</body>')) fail('index.html des Spiels hat kein </body>');
+// Werbeskript der öffentlichen Seite: auf dem privaten Server nicht laden (Datenschutz; COEP blockt es ohnehin)
+game = game.replace(/<script[^>]*adsbygoogle[\s\S]*?<\/script>\s*/g, '');
 game = game.replace('</body>', '<script src="addons.js"></script>\n</body>');
-fs.writeFileSync(path.join(www, 'game.html'), game);
+// Einstellungen für die Engine, bevor sie startet (FNV_* in der Adresse haben weiter Vorrang):
+// - fonvLocal: der Datenmanager hat das Spiel aufs Gerät geladen und sw.js liefert es aus
+// - Block-Cache der Engine (FNV_FS_CACHE_MB, Standard 256): vom Gerät gelesen braucht es ihn kaum -> 32 MB; das gibt
+//   dem Spiel über 200 MB mehr vom festen Speicher (sonst "OOM" beim Laden der Welt). Gestreamt 128, iPad-Variante 64.
+const patch = (from, to, what) => {
+  if (!game.includes(from)) fail(`game.html: ${what} nicht gefunden – Spielseite hat sich geändert, tools/assemble.mjs anpassen`);
+  game = game.replace(from, to);
+};
+patch('<script src="precheck.js"></script>', `<script>
+window.fonvLocal = (function () { try { return localStorage.getItem('fonv.offline') === '1' && !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch (e) { return false; } })();
+window.fonvEnv = { FNV_FS_CACHE_MB: window.fonvLocal ? '32' : '__STREAM_CACHE__' };
+</script>
+<script src="precheck.js"></script>`, 'precheck.js');
+// iPad-Variante: immer die kleinen Archive. Die iPad-Grafik kann die komprimierten Texturen nicht direkt nutzen
+// (kein BC), sie werden entpackt und brauchen ein Vielfaches an Speicher – mit "High" schließt iPadOS den Tab.
+patch("const qualityParam = query.get('quality') ||", "const qualityParam = query.get('quality') || window.fonvQuality ||", 'Qualität');
+patch('const env = {};', 'const env = Object.assign({}, window.fonvEnv);', 'env');
+patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät geladen' : 'downloaded'}` + (boot.file", 'Ladeanzeige');
+// Geräte-Check der Spielseite: mit Daten vom Gerät weder die Leitung messen noch vor langsamer Verbindung warnen
+{
+  const f = path.join(www, 'precheck.js');
+  let pc = fs.readFileSync(f, 'utf8');
+  for (const [from, to] of [
+    ["const measured = query.get('start') ? null :", "const measured = (window.fonvLocal || query.get('start')) ? null :"],
+    ['if (info.mbps < 0.6) warn(', 'if (!window.fonvLocal && info.mbps < 0.6) warn('],
+    ['if (info.rttMs > 400) warn(', 'if (!window.fonvLocal && info.rttMs > 400) warn('],
+  ]) {
+    if (!pc.includes(from)) fail(`precheck.js: "${from}" nicht gefunden – tools/assemble.mjs anpassen`);
+    pc = pc.replace(from, to);
+  }
+  fs.writeFileSync(f, pc);
+  for (const ext of ['.br', '.gz']) fs.rmSync(f + ext, { force: true });   // sonst liefert der Server die alte Fassung
+}
+const page = (cache) => game.replace('__STREAM_CACHE__', cache);
+fs.writeFileSync(path.join(www, 'game.html'), page('128'));
+const ipad = opt('--ipad-build');
+if (ipad) {
+  if (!fs.existsSync(path.join(ipad, 'fnv_web.wasm'))) fail(`--ipad-build: ${ipad}/fnv_web.wasm fehlt`);
+  if (!game.includes("'/build/fnv_web.js'")) fail("game.html lädt nicht mehr '/build/fnv_web.js' – iPad-Seite anpassen");
+  fs.mkdirSync(path.join(www, 'build-ipad'));
+  // vorkomprimierte Fassungen (die .htaccess liefert sie aus; 95 MB -> ~14 MB), einmal neben dem Build gemerkt
+  for (const f of ['fnv_web.js', 'fnv_web.wasm']) {
+    const src = path.join(ipad, f), mt = fs.statSync(src).mtimeMs;
+    const fresh = (x) => fs.existsSync(x) && fs.statSync(x).mtimeMs >= mt;
+    if (!fresh(src + '.br')) fs.writeFileSync(src + '.br', zlib.brotliCompressSync(fs.readFileSync(src), { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } }));
+    if (!fresh(src + '.gz')) fs.writeFileSync(src + '.gz', zlib.gzipSync(fs.readFileSync(src), { level: 9 }));
+  }
+  for (const f of fs.readdirSync(ipad)) if (/^fnv_web\.(js|wasm)(\.(br|gz))?$/.test(f)) fs.copyFileSync(path.join(ipad, f), path.join(www, 'build-ipad', f));
+  fs.writeFileSync(path.join(www, 'game-ipad.html'), page('64').replaceAll("'/build/fnv_web.js'", "'/build-ipad/fnv_web.js'")
+    .replace('window.fonvEnv = {', "window.fonvQuality = 'low'; window.fonvEnv = {")
+    .replace('</head>', '<style>#qHigh { display: none !important; }</style></head>'));
+}
 
 // 2) unsere App (überschreibt nichts vom Spiel außer index.html)
 for (const f of fs.readdirSync(appDist)) {
-  if (f === 'sw.js') continue;                       // auf dem eigenen Server kein Service Worker
   fs.cpSync(path.join(appDist, f), path.join(www, f), { recursive: true });
 }
 
@@ -72,7 +128,22 @@ return [
 ];
 `);
 
-// 4) beim ersten Hochladen: Startzugang
+// 4) Liste der App-Dateien für den Offline-Betrieb (Datenmanager, sw.js); "version" ändert sich mit jedem Inhalt
+const offline = [];
+const hash = crypto.createHash('sha1');
+const walk = (dir, rel) => {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const r = rel ? rel + '/' + e.name : e.name;
+    if (e.isDirectory()) { walk(path.join(dir, e.name), r); continue; }
+    if (/\.(php|br|gz|map)$/.test(e.name) || e.name.startsWith('.')) continue;
+    offline.push(r);
+    hash.update(r + '\0').update(fs.readFileSync(path.join(dir, e.name)));
+  }
+};
+walk(www, '');
+fs.writeFileSync(path.join(www, 'offline.json'), JSON.stringify({ version: hash.digest('hex').slice(0, 16), files: offline }));
+
+// 5) beim ersten Hochladen: Startzugang
 if (flag('--init-private')) {
   fs.mkdirSync(path.join(out, 'fnv-private'), { recursive: true });
   fs.copyFileSync(path.join(REPO, 'hosting', 'initial-admin.htpasswd.txt'), path.join(out, 'fnv-private', '.htpasswd'));
