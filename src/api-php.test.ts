@@ -169,19 +169,21 @@ return false;`,
     const a: [string, string] = ['admin', adminPw];
     const l: [string, string] = ['lisa', 'Lisa-Passwort-1'];
     // das Spiel legt Saves an (wie pal_fs_web.cpp)
-    expect((await fsCall(a, `/fs/mkdir?p=${enc('/docs/Saves')}`, { method: 'POST' })).status).toBe(200);
-    expect((await fsCall(a, `/fs/truncate?p=${enc('/docs/Saves/Save 1 - Courier.fos')}`, { method: 'POST' })).status).toBe(200);
-    expect((await fsCall(a, `/fs/write?p=${enc('/docs/Saves/Save 1 - Courier.fos')}&o=0`, { method: 'POST', body: 'FO3SAVEGAME-admin' })).status).toBe(200);
+    // wie das Spiel: Ordner für Ordner (mkdir legt nur eine Ebene an)
+    for (const d of ['/docs/My Games', '/docs/My Games/FalloutNV', '/docs/My Games/FalloutNV/Saves'])
+      expect((await fsCall(a, `/fs/mkdir?p=${enc(d)}`, { method: 'POST' })).status).toBe(200);
+    expect((await fsCall(a, `/fs/truncate?p=${enc('/docs/My Games/FalloutNV/Saves/Save 1 - Courier.fos')}`, { method: 'POST' })).status).toBe(200);
+    expect((await fsCall(a, `/fs/write?p=${enc('/docs/My Games/FalloutNV/Saves/Save 1 - Courier.fos')}&o=0`, { method: 'POST', body: 'FO3SAVEGAME-admin' })).status).toBe(200);
     const saves = (await call(a, 'saves')).json.saves;
     expect(saves.map((s: { name: string }) => s.name)).toEqual(['Save 1 - Courier.fos']);
     expect((await call(l, 'saves')).json.saves).toEqual([]); // Lisa sieht sie nicht
-    expect((await fsCall(l, `/fs/stat?p=${enc('/docs/Saves/Save 1 - Courier.fos')}`)).status).toBe(404);
+    expect((await fsCall(l, `/fs/stat?p=${enc('/docs/My Games/FalloutNV/Saves/Save 1 - Courier.fos')}`)).status).toBe(404);
     // Download, Upload, Löschen
     const dl = await call(a, `saves/download?name=${enc('Save 1 - Courier.fos')}`);
     expect(dl.buf.toString()).toBe('FO3SAVEGAME-admin');
     expect(dl.headers.get('content-disposition')).toContain('Save%201%20-%20Courier.fos');
     expect((await call(l, `saves/upload?name=${enc('Save 7.fos')}`, undefined, 'FO3SAVEGAME-lisa')).json).toEqual({ ok: true });
-    expect((await fsCall(l, `/fs/read?p=${enc('/docs/saves/save 7.fos')}&o=0&n=100`).then((r) => r.text()))).toBe('FO3SAVEGAME-lisa');
+    expect((await fsCall(l, `/fs/read?p=${enc('/docs/my games/falloutnv/saves/save 7.fos')}&o=0&n=100`).then((r) => r.text()))).toBe('FO3SAVEGAME-lisa');
     expect((await call(l, `saves/upload?name=${enc('../../evil.fos')}`, undefined, 'x')).status).toBe(400);
     expect((await call(l, `saves/upload?name=${enc('evil.php')}`, undefined, 'x')).status).toBe(400);
     expect((await call(l, 'saves/delete', { name: 'Save 7.fos' })).json).toEqual({ ok: true });
@@ -196,8 +198,8 @@ return false;`,
     const zip = (await call(a, `backups/download?name=${enc(created.name)}`)).buf;
     expect(zip.subarray(0, 2).toString()).toBe('PK');
     // Spielstand ändern, dann Backup zurückspielen
-    await fsCall(a, `/fs/write?p=${enc('/docs/Saves/Save 1 - Courier.fos')}&o=0`, { method: 'POST', body: 'KAPUTT-KAPUTT-KAP' });
-    await fsCall(a, `/fs/truncate?p=${enc('/docs/Saves/Save 2.fos')}`, { method: 'POST' });
+    await fsCall(a, `/fs/write?p=${enc('/docs/My Games/FalloutNV/Saves/Save 1 - Courier.fos')}&o=0`, { method: 'POST', body: 'KAPUTT-KAPUTT-KAP' });
+    await fsCall(a, `/fs/truncate?p=${enc('/docs/My Games/FalloutNV/Saves/Save 2.fos')}`, { method: 'POST' });
     const restored = (await call(a, 'backups/restore', { name: created.name })).json;
     expect(restored.ok).toBe(true);
     expect(restored.safety).toMatch(/vor-wiederherstellung\.zip$/);

@@ -63,23 +63,43 @@ if ($route === 'account/password' && $method === 'POST') {
 }
 
 // ---- Speicherstände ------------------------------------------------------------------------------------
-/** Ordner "Saves" im Datenordner des Benutzers (Groß/Klein wie das Spiel ihn angelegt hat). */
+/**
+ * Ordner der Spielstände: dort, wo das Spiel speichert ("My Games/FalloutNV/Saves" unter /docs, Groß/Klein wie
+ * angelegt). Vorher suchte die App in "<Benutzer>/Saves" – Spielstände aus dem Spiel tauchten in der App nie auf, und
+ * dort hochgeladene fand das Spiel nicht. Ein alter "Saves"-Ordner direkt im Benutzerordner wird weiter gelesen.
+ */
 function saves_dir(string $me): string {
+    $cur = user_data_dir($me);
+    foreach (['My Games', 'FalloutNV', 'Saves'] as $part) {
+        $hit = null;
+        foreach ((array)@scandir($cur) as $n) if (is_string($n) && strtolower($n) === strtolower($part)) { $hit = $n; break; }
+        $cur .= '/' . ($hit ?? $part);
+    }
+    return $cur;
+}
+function legacy_saves_dir(string $me): ?string {
     $base = user_data_dir($me);
     foreach ((array)@scandir($base) as $n) if (is_string($n) && strtolower($n) === 'saves') return $base . '/' . $n;
-    return $base . '/Saves';
+    return null;
 }
 function save_path(string $me, string $name): string {
     if (!preg_match('/^[^\/\\\\\0]{1,200}\.(fos|nvse)$/i', $name) || str_contains($name, '..')) fail(400, 'Ungültiger Dateiname');
-    return saves_dir($me) . '/' . $name;
+    $p = saves_dir($me) . '/' . $name;
+    // ein Stand, der nur im alten Ordner liegt (Download/Löschen)
+    $old = legacy_saves_dir($me);
+    if (!is_file($p) && $old !== null && is_file($old . '/' . $name)) return $old . '/' . $name;
+    return $p;
 }
 function list_saves(string $me): array {
     $out = [];
-    $d = saves_dir($me);
-    foreach ((array)@scandir($d) as $n) {
-        if (!is_string($n) || !preg_match('/\.fos$/i', $n)) continue;
-        $p = $d . '/' . $n;
-        $out[] = ['name' => $n, 'size' => filesize($p), 'mtime' => filemtime($p)];
+    $seen = [];
+    foreach (array_filter([saves_dir($me), legacy_saves_dir($me)]) as $d) {
+        foreach ((array)@scandir($d) as $n) {
+            if (!is_string($n) || !preg_match('/\.fos$/i', $n) || isset($seen[strtolower($n)])) continue;
+            $seen[strtolower($n)] = true;
+            $p = $d . '/' . $n;
+            $out[] = ['name' => $n, 'size' => filesize($p), 'mtime' => filemtime($p)];
+        }
     }
     usort($out, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
     return $out;
