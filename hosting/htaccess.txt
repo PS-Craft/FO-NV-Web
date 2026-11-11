@@ -16,7 +16,7 @@ AuthUserFile __HTPASSWD__
 Require valid-user
 # Statt der nackten "Unauthorized"-Seite (z. B. nach einem Netzwechsel oder abgebrochener Passwortabfrage): nach ein
 # paar Sekunden neu laden, damit der Browser wieder nach Name und Passwort fragt
-ErrorDocument 401 "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Anmeldung</title><body style='background:#1a1410;color:#f1e3c8;font:17px -apple-system,system-ui,sans-serif;text-align:center;padding:20vh 16px'><p>Anmeldung nötig – du wirst gleich weitergeleitet …</p><p><a style='color:#e8a03c' href='./'>Jetzt anmelden</a></p><script>setTimeout(function(){location.replace(location.pathname.replace(/[^/]*$/,'')+'?login='+Date.now())},3000)</script>"
+ErrorDocument 401 "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Anmeldung</title><body style='background:#1a1410;color:#f1e3c8;font:17px -apple-system,system-ui,sans-serif;text-align:center;padding:20vh 16px'><p>Anmeldung n&ouml;tig &ndash; du wirst gleich weitergeleitet &hellip;</p><p><a style='color:#e8a03c' href='./'>Jetzt anmelden</a></p><script>setTimeout(function(){location.replace(location.pathname.replace(/[^/]*$/,'')+'?login='+Date.now())},3000)</script>"
 
 # ---- Header für SharedArrayBuffer (WASM-Threads) ------------------------------------------------------
 SetEnvIf Request_URI "." FNV_APACHE_HEADERS=1

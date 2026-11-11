@@ -131,7 +131,11 @@ function make_backup(string $me, string $label): string {
         $count++;
     }
     if ($count === 0) $zip->addFromString('LEER.txt', "Noch keine Spielstände.\n");
-    $zip->close();
+    // erst wenn die ZIP wirklich auf der Platte liegt, gilt das Backup (Platte voll, Kontingent …)
+    if (!$zip->close() || !is_file(backups_dir($me) . '/' . $name)) {
+        @unlink(backups_dir($me) . '/' . $name);
+        fail(500, 'Backup konnte nicht geschrieben werden');
+    }
     return $name;
 }
 function rrmdir(string $d): void {
@@ -182,17 +186,26 @@ if (($route === 'backups/restore' || $route === 'backups/upload') && $method ===
     if ($zip->open($p) !== true) fail(400, 'Keine gültige ZIP-Datei');
     for ($i = 0; $i < $zip->numFiles; $i++) {                // nur harmlose Pfade zulassen
         $n = (string)$zip->getNameIndex($i);
-        if ($n === '' || $n[0] === '/' || str_contains($n, '..') || str_contains($n, '\\') || str_contains($n, ':')) {
+        if ($n === '' || $n[0] === '/' || str_contains($n, '..') || str_contains($n, '\\') || str_contains($n, ':')
+            || preg_match('#(^|/)(\.ht[^/]*|[^/]*\.(php\d*|phtml|phar|cgi|pl)(\.[^/]*)?)(/|$)#i', $n)) {
             $zip->close();
             fail(400, 'Backup enthält ungültige Pfade');
         }
     }
     $safety = make_backup($me, 'vor-wiederherstellung');      // Sicherheitskopie des aktuellen Stands
+    // erst vollständig daneben entpacken, dann tauschen: scheitert das Entpacken, bleiben die Spielstände unberührt
     $dst = user_data_dir($me);
-    rrmdir($dst);
-    ensure_dir($dst);
-    $zip->extractTo($dst);
+    $tmp = $dst . '.restore-tmp';
+    rrmdir($tmp);
+    ensure_dir($tmp);
+    if (!is_dir($tmp) || !$zip->extractTo($tmp)) {
+        $zip->close();
+        rrmdir($tmp);
+        fail(500, 'Backup konnte nicht entpackt werden – Spielstände unverändert');
+    }
     $zip->close();
+    rrmdir($dst);
+    if (!rename($tmp, $dst)) fail(500, 'Wiederherstellung fehlgeschlagen – Sicherung: ' . $safety);
     @unlink($dst . '/LEER.txt');
     reply(200, ['ok' => true, 'safety' => $safety]);
 }
@@ -237,7 +250,8 @@ if (str_starts_with($route, 'admin/')) {
     if ($route === 'admin/users/add' && $method === 'POST') {
         $u = (string)($in['user'] ?? '');
         $pw = (string)($in['password'] ?? '');
-        if (!valid_user($u)) fail(400, 'Benutzername: 1–40 Zeichen, nur Buchstaben, Ziffern, . _ -');
+        // safe_name(): zwei Namen dürfen nicht im selben Datenordner landen ("a." und "a")
+        if (!valid_user($u) || safe_name($u) !== $u) fail(400, 'Benutzername: 1–40 Zeichen, nur Buchstaben, Ziffern, . _ - (nicht mit Punkt beginnen oder enden)');
         if (isset($users[$u])) fail(409, 'Gibt es schon');
         if (strlen($pw) < 8) fail(400, 'Passwort: mindestens 8 Zeichen');
         $users[$u] = hash_password($pw);

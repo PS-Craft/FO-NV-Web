@@ -71,22 +71,34 @@ function buildIndex(string $game, string $mobile, array $dlc): string {
     return json(['f' => (object)$files, 'd' => (object)$dirs]);
 }
 
-function gameIndex(string $game, string $mobile, array $dlc, string $cache): array {
+// $fresh (nur /fs/index, einmal je Spielstart und Thread): den Ordner immer neu durchgehen. Die Ordner-Zeitstempel
+// allein übersehen ersetzte oder noch hochladende Dateien – ein falscher Index bliebe sonst für immer stehen.
+function gameIndex(string $game, string $mobile, array $dlc, string $cache, bool $fresh = false): array {
     static $idx = null;
     if ($idx !== null) return $idx;
     $file = $cache . '/index-' . ($dlc ? substr(sha1(implode(',', $dlc)), 0, 12) : 'base') . '.json';
     $newest = max(@filemtime($game) ?: 0, @filemtime($game . '/Data') ?: 0, @filemtime($game . '/data') ?: 0,
                   $mobile !== '' ? (@filemtime($mobile) ?: 0) : 0, @filemtime(__DIR__ . '/fs-config.php') ?: 0);
     $mt = @filemtime($file);
-    if ($mt !== false && $mt >= $newest && !isset($_GET['rebuild'])) {
-        $raw = (string)file_get_contents($file);
-    } else {
-        $raw = buildIndex($game, $mobile, $dlc);
-        @mkdir($cache, 0700, true);
-        @file_put_contents($file . '.tmp', $raw);
-        @rename($file . '.tmp', $file);
+    $raw = '';
+    $data = null;
+    $old = $mt !== false ? (string)@file_get_contents($file) : '';
+    if (!$fresh && $mt !== false && $mt >= $newest && !isset($_GET['rebuild'])) {
+        $raw = $old;
+        $data = json_decode($raw, true);
     }
-    $idx = ['raw' => $raw, 'data' => json_decode($raw, true)];
+    // gespeicherte Fassung fehlt, ist veraltet oder beschädigt (halb geschrieben): neu aufbauen
+    if (!is_array($data) || !isset($data['f'], $data['d'])) {
+        $raw = buildIndex($game, $mobile, $dlc);
+        $data = json_decode($raw, true);
+        if ($raw !== $old) {
+            @mkdir($cache, 0700, true);
+            // eigener Name je Anfrage: gleichzeitige Anfragen schreiben sich nicht gegenseitig in die Datei
+            $tmp = $file . '.' . bin2hex(random_bytes(4)) . '.tmp';
+            if (@file_put_contents($tmp, $raw) === strlen($raw)) @rename($tmp, $file); else @unlink($tmp);
+        }
+    }
+    $idx = ['raw' => $raw, 'data' => $data];
     return $idx;
 }
 
@@ -95,6 +107,8 @@ function resolveDocs(string $data, string $rel, bool $forCreate): ?string {
     $cur = $data;
     foreach (array_values(array_filter(explode('/', $rel), 'strlen')) as $part) {
         if ($part === '..' || $part === '.' || str_contains($part, "\0") || str_contains($part, '\\')) return null;
+        // keine Server-Steuerdateien oder Skripte im Spielstand-Ordner (läge er im Web-Ordner, wären sie ausführbar)
+        if (preg_match('/^\.ht|\.(php\d*|phtml|phar|cgi|pl)(\.|$)/i', $part)) return null;
         $next = $cur . '/' . $part;
         if (!file_exists($next)) {
             $match = null;
@@ -158,10 +172,16 @@ $op = (string)($_GET['op'] ?? '');
 if ($op === '' && preg_match('~/fs(?:\.php)?/([a-z]+)$~', (string)parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH), $m)) $op = $m[1];
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
-if ($op === 'index') out(200, gameIndex($GAME, $MOBILE, $DLC, $CACHE)['raw'], 'application/json', 'no-cache');
+if ($op === 'index') out(200, gameIndex($GAME, $MOBILE, $DLC, $CACHE, true)['raw'], 'application/json', 'no-cache');
 
 if (!is_dir($DATA)) @mkdir($DATA, 0700, true);
 $write = $method === 'POST';
+// Schreiben nur von der eigenen Seite: eine fremde Website könnte sonst im Namen des angemeldeten Spielers Spielstände
+// überschreiben oder löschen. (X-FONV wie in api.php geht hier nicht: die Engine schickt ihre Anfragen ohne.)
+$sfs = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? '';
+$org = $_SERVER['HTTP_ORIGIN'] ?? '';
+if ($write && (($sfs !== '' && $sfs !== 'same-origin')
+    || ($org !== '' && parse_url($org, PHP_URL_HOST) !== explode(':', $_SERVER['HTTP_HOST'] ?? '')[0]))) out(403);
 $loc = locate(isset($_GET['p']) ? (string)$_GET['p'] : null, $write, $ctx);
 if ($loc === null || ($write && $loc['root'] !== 'docs')) out(403);
 
