@@ -87,7 +87,7 @@ $new | ConvertTo-Json | Set-Content $stateFile -Encoding UTF8
 
 # vorkomprimierte Fassungen von Dateien, die tools/assemble.mjs verändert: auf dem Server löschen, sonst liefert
 # Apache weiter die alte .br/.gz aus. Eigener Lauf, Ergebnis egal: sind sie schon weg, meldet WinSCP einen Fehler.
-$stale = @('precheck.js.br', 'precheck.js.gz') | Where-Object { -not (Test-Path "$root$_") } | ForEach-Object { "rm `"$webDir/$_`"" }
+$stale = @('precheck.js.br', 'precheck.js.gz', 'tuner.js.br', 'tuner.js.gz') | Where-Object { -not (Test-Path "$root$_") } | ForEach-Object { "rm `"$webDir/$_`"" }
 if ($stale) { [void](Invoke-WinScp (@('option batch continue') + $stale)) }
 
 # Startzugang nur, wenn noch keine Benutzerliste existiert. "Nicht gefunden" gilt nur, wenn die Verbindung steht und

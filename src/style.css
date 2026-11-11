@@ -128,3 +128,31 @@ input:focus-visible, button:focus-visible, .btn:focus-visible { outline: 2px sol
   .grid { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
   .tabbar button span { font-size: .66rem; }
 }
+
+/* Spielen: Startbereich */
+.hero2 { position: relative; margin: 14px 0 6px; border-radius: 22px; overflow: hidden; border: 1px solid var(--line);
+  background: radial-gradient(120% 90% at 85% 10%, rgba(232, 160, 60, .35), transparent 55%),
+              radial-gradient(90% 70% at 10% 110%, rgba(184, 67, 47, .28), transparent 60%),
+              linear-gradient(160deg, var(--card), var(--bg)); }
+.hero2::after { content: ''; position: absolute; inset: auto 0 0 0; height: 38%; pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(0, 0, 0, .04) 3px 4px); }
+.hero2-in { position: relative; z-index: 1; padding: 30px 26px 24px; }
+.kicker { margin: 0 0 6px; font-size: .78rem; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+.hero2 h1 { font-size: clamp(1.6rem, 4.6vw, 2.3rem); }
+.hero2 .sub { margin: 0; color: var(--muted); }
+.hero2 .btn.big { margin-top: 18px; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.pill { font-size: .8rem; padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--muted); }
+.pill.ok { color: var(--accent); }
+/* Spielen: Einstellungen */
+.settings h2 { margin-bottom: 6px; }
+.set { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.settings h2 + .set { border-top: 0; }
+.set small { display: block; color: var(--muted); font-size: .82rem; }
+.toggle { appearance: none; -webkit-appearance: none; flex: none; width: 50px; height: 30px; border-radius: 15px; background: var(--line);
+  position: relative; cursor: pointer; transition: background .15s; margin: 0; }
+.toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
+.toggle:checked { background: var(--accent); }
+.toggle:checked::after { left: 23px; }
+@media (max-width: 560px) { .hero2-in { padding: 24px 18px 20px; } .set .seg { width: 100%; } }
+#hud:empty { display: none; }

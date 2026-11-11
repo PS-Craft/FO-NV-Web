@@ -117,6 +117,10 @@ Bild mit dem Finger berührst. **In Menüs** (Hauptmenü, Pip-Boy, Dialoge) klic
 tippst, und der Spielzeiger folgt Maus/Trackpad exakt (gilt für die GOG-Fassung 1.4.0.525).
 **iPad-Qualität:** `game-ipad.html` benutzt immer die kleinen Archive („Niedrig“) – mit „Hoch“ schließt iPadOS den
 Tab wegen Speichermangel.
+**Menü im Spiel (☰ / F8):** Weiterspielen, **Speichern & verlassen** (schnellspeichern, hochladen, zurück zur App),
+Pause, Pip-Boy, Schnellspeichern, Anzeige, **Akku sparen** (höchstens 30 Bilder/s), **Pause im Hintergrund** (beim
+App-Wechsel pausiert das Spiel und sichert), Touch-Steuerung, Cheats. Beendet sich das Spiel selbst (Hauptmenü → Quit),
+geht es zurück zur App. Fällt die Grafik aus (iPad), wird zuerst schnellgespeichert, dann neu laden.
 **Diagnose:** Die Spielseite schreibt alle paar Sekunden ihren Zustand nach `fnv-data/users/<Name>/FONV-Diagnose/`
 (eigener Server). Schließt der Browser den Tab, zeigt die letzte Zeile, was das Spiel gerade tat.
 **Tempo:** Apache prüft das Passwort bei jeder Anfrage. Die App speichert Passwörter deshalb mit bcrypt-Stufe 6 und

@@ -45,7 +45,7 @@ function shell(): void {
     }),
   );
   app.querySelector('#account')?.addEventListener('click', () => passwordDialog(false));
-  startHud(app.querySelector('#hud')!);
+  if (new URLSearchParams(location.search).has('debug')) startHud(app.querySelector('#hud')!);
   void render();
 }
 
@@ -74,23 +74,44 @@ async function renderPlay(v: HTMLElement): Promise<void> {
   const [saves, dlc] = await Promise.all([api.get<{ saves: FileEntry[] }>('saves'), api.get<{ dlc: Dlc[] }>('dlc')]);
   const last = saves.saves[0];
   const on = dlc.dlc.filter((d) => d.enabled).length;
+  const lastName = last ? last.name.replace(/\.fos$/i, '').replace(/^.*\//, '') : '';
   v.innerHTML = `
-    <section class="hero">
-      <h1>Willkommen zurück${me?.user ? ', ' + esc(me.user) : ''}.</h1>
-      <p class="muted">${last ? `Letzter Spielstand: <b>${esc(last.name.replace(/\.fos$/i, ''))}</b> · ${when(last.mtime)}` : 'Noch kein Spielstand – Zeit für ein neues Spiel.'}</p>
-      <a class="btn big" id="playBtn" href="./game.html">${icon('play')} Spiel starten</a>
-      <div class="row wrap"><span class="muted">Anzeige:</span><div class="seg" id="disp">
-        <button data-d="fullscreen">Vollbild</button><button data-d="window">Fenster</button><button data-d="classic">Mit Leiste</button></div></div>
-      <div class="row wrap"><span class="muted">Version:</span><div class="seg" id="variant">
-        <button data-d="auto">Automatisch</button><button data-d="pc">PC</button><button data-d="ipad">iPad</button></div></div>
-      <p class="hint">Menü im Spiel (Cheats, Anzeige, zurück zur App): am PC Taste F8, am iPad den Knopf ☰ oben in der Mitte antippen.</p>
-      <p class="hint" id="offl"></p>
+    <section class="hero2">
+      <div class="hero2-in">
+        <p class="kicker">Fallout: New Vegas</p>
+        <h1>Willkommen zurück${me?.user ? ', ' + esc(me.user) : ''}.</h1>
+        <p class="sub">${last ? `Letzter Spielstand <b>${esc(lastName)}</b> · ${when(last.mtime)}` : 'Noch kein Spielstand – Zeit für ein neues Spiel.'}</p>
+        <a class="btn big" id="playBtn" href="./game.html">${icon('play')} ${last ? 'Weiterspielen' : 'Spiel starten'}</a>
+        <div class="chips" id="chips"><span class="pill" id="srcPill">…</span><span class="pill" id="syncPill" hidden></span></div>
+        <p class="hint" id="offl"></p>
+      </div>
     </section>
     <div class="grid">
       <div class="card stat"><b>${saves.saves.length}</b><span>Spielstände</span></div>
       <div class="card stat"><b>${on}/${dlc.dlc.length}</b><span>DLCs aktiv</span></div>
       <div class="card stat"><b>${cheatLabel() ? 'An' : 'Aus'}</b><span>Cheats</span></div>
-    </div>`;
+    </div>
+    <section class="card settings">
+      <h2>Einstellungen fürs Spiel</h2>
+      <div class="set"><div><b>Anzeige</b><small>Vollbild und Fenster ohne Leisten; Menü im Spiel: ${isTablet() ? 'Knopf ☰ oben' : 'F8'}</small></div>
+        <div class="seg" id="disp"><button data-d="fullscreen">Vollbild</button><button data-d="window">Fenster</button><button data-d="classic">Mit Leiste</button></div></div>
+      <div class="set"><div><b>Version</b><small>iPad: weniger Speicher, kleinere Archive</small></div>
+        <div class="seg" id="variant"><button data-d="auto">Automatisch</button><button data-d="pc">PC</button><button data-d="ipad">iPad</button></div></div>
+      <label class="set"><div><b>Akku sparen</b><small>höchstens 30 Bilder pro Sekunde, weniger Wärme</small></div>
+        <input type="checkbox" class="toggle" id="optFps" /></label>
+      <label class="set"><div><b>Pause im Hintergrund</b><small>beim App-Wechsel pausiert das Spiel und sichert</small></div>
+        <input type="checkbox" class="toggle" id="optPause" /></label>
+    </section>`;
+  // Schalter: dieselben Einstellungen wie im Menü des Spiels (public/addons.js)
+  const opt = (id: string, key: string, onVal: string, offVal: string, def: boolean) => {
+    const box = v.querySelector<HTMLInputElement>('#' + id)!;
+    let cur: string | null = null;
+    try { cur = localStorage.getItem(key); } catch { /* egal */ }
+    box.checked = cur === null ? def : cur === onVal;
+    box.addEventListener('change', () => { try { localStorage.setItem(key, box.checked ? onVal : offVal); } catch { /* egal */ } });
+  };
+  opt('optFps', 'fonv.fps', '30', '60', false);
+  opt('optPause', 'fonv.autopause', '1', '0', true);
   // Anzeige im Spiel (public/addons.js liest fonv.display)
   const disp = v.querySelector<HTMLElement>('#disp')!;
   const paintDisp = () => {
@@ -143,16 +164,19 @@ async function renderPlay(v: HTMLElement): Promise<void> {
       wire();
     }
   }
+  const srcPill = v.querySelector<HTMLElement>('#srcPill')!, syncPill = v.querySelector<HTMLElement>('#syncPill')!;
+  srcPill.textContent = state?.enabled && !offl.innerHTML ? '● Vom Gerät' : '○ Gestreamt';
+  srcPill.classList.toggle('ok', !!(state?.enabled && !offl.innerHTML));
   if (state?.enabled && !offl.innerHTML) {
-    offl.textContent = 'Startet vom Gerät (Datenmanager). Spielstände werden abgeglichen …';
+    syncPill.hidden = false;
+    syncPill.textContent = 'Cloud wird abgeglichen …';
     void swCall<{ ok: boolean; error?: string }>('sync')
       .then(async (r) => {
-        const s = await syncStatus();
-        offl.textContent = r.ok
-          ? `Startet vom Gerät. Spielstände abgeglichen${s?.lastSync ? ' ' + when(s.lastSync) : ''}.`
-          : `Startet vom Gerät. Spielstände: ${r.error ?? 'nicht abgeglichen'} – sie bleiben auf dem Gerät und werden später hochgeladen.`;
+        const st = await syncStatus();
+        syncPill.textContent = r.ok ? `☁ Abgeglichen${st?.lastSync ? ' ' + when(st.lastSync) : ''}` : '☁ Später abgleichen';
+        syncPill.title = r.ok ? '' : `${r.error ?? 'nicht abgeglichen'} – Spielstände bleiben auf dem Gerät und werden später hochgeladen.`;
       })
-      .catch(() => { offl.textContent = 'Startet vom Gerät.'; });
+      .catch(() => { syncPill.hidden = true; });
   }
 }
 

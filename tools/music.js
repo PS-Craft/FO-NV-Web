@@ -36,6 +36,11 @@ function unlockPool() {
   if (!audio.ctx) return;
   while (pool.length < 4) pool.push(makeSlot());
   for (const s of pool) {
+    // ein Stück, das vor der ersten Geste starten sollte (Hauptmenü), jetzt abspielen – das schaltet auch frei
+    if (s.busy && s.track && s.track.playing && s.el.paused && s.track.url) {
+      s.el.play().then(() => { s.unlocked = true; }, () => undefined);
+      continue;
+    }
     if (s.unlocked || s.busy) continue;
     s.el.src = SILENT;
     const p = s.el.play();
@@ -64,6 +69,7 @@ window.fnvMusic = (id, cmd, path, volume, pos) => {
   if (!t) {
     const slot = takeSlot();
     t = { slot, el: slot.el, url: null, ready: null, playing: false, path };
+    slot.track = t;
     t.ready = trackUrl(path).then((url) => {
       t.url = url;
       t.el.src = url;
@@ -87,9 +93,11 @@ window.fnvMusic = (id, cmd, path, volume, pos) => {
     t.el.removeAttribute('src'); t.el.load();                 // gibt den Puffer des Elements frei
     if (t.url) URL.revokeObjectURL(t.url);
     t.slot.busy = false;
+    t.slot.track = null;
     tracks.delete(id);
   };
-  if (cmd === 1) { setVol(volume); t.playing = true; start(pos).catch((e) => log('music ' + path + ': ' + e, true)); log('music: ' + path); }
+  // NotAllowedError (Safari vor der ersten Geste) ist kein Fehler: das erste Tippen startet das Stück (unlockPool)
+  if (cmd === 1) { setVol(volume); t.playing = true; start(pos).catch((e) => { if (e && e.name !== 'NotAllowedError') log('music ' + path + ': ' + e, true); }); log('music: ' + path); }
   else if (cmd === 2) { t.playing = false; try { t.el.pause(); } catch {} }
   else if (cmd === 3) free();
   else if (cmd === 4) setVol(volume);

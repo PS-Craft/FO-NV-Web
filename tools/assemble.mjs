@@ -94,6 +94,22 @@ patch(`if (data && performance.now() < deadline - 2) { await yieldSoon(); contin
           } else await yieldSoon();
           continue;
         }`, 'Pump-Schleife');
+// Akku sparen (localStorage fonv.fps = 30, in der App und im ☰-Menü wählbar): höchstens jedes zweite Bild des
+// Bildschirms. Das Spiel wartet dann länger auf die Seite und rechnet weniger – weniger Akku, weniger Wärme.
+patch(`  if (!PACE || presentSeq !== rafSeq || performance.now() - rafAt > 100) { presentSeq = rafSeq; return 0; }
+  const t0 = performance.now();
+  pumpInfo.vsyncWaits = (pumpInfo.vsyncWaits || 0) + 1;
+  await within(40, (f) => rafWaiters.push(f));
+  presentSeq = rafSeq;
+  return performance.now() - t0;`,
+  `  let every = 1;
+  try { every = localStorage.getItem('fonv.fps') === '30' ? 2 : 1; } catch {}
+  if (!PACE || rafSeq - presentSeq >= every || performance.now() - rafAt > 100) { presentSeq = rafSeq; return 0; }
+  const t0 = performance.now();
+  pumpInfo.vsyncWaits = (pumpInfo.vsyncWaits || 0) + 1;
+  while (rafSeq - presentSeq < every && performance.now() - t0 < 80) await within(40, (f) => rafWaiters.push(f));
+  presentSeq = rafSeq;
+  return performance.now() - t0;`, 'Bildtaktung');
 // Musik-Spieler ersetzen (tools/music.js): der alte behielt jedes entpackte Stück für immer im Speicher
 {
   const from = 'const tracks = new Map();\naudio.tracks = tracks;\nconst decoded = new Map();';
@@ -120,11 +136,13 @@ patch(`if (data && performance.now() < deadline - 2) { await yieldSoon(); contin
 // Sparsame Einstellungen der iPad-Variante ("Schlüssel:Abschnitt=Wert", FNV_INI in port/recomp/pal_kernel.cpp).
 // Protokoll vom iPad: der Tab wurde mitten im Spiel geschlossen bzw. die Grafikeinheit fiel aus (createBindGroup
 // scheitert, "popErrorScope failed") – der Grafikspeicher reicht dort nicht für die PC-Standardwerte, weil Texturen
-// ohne BC-Kompression entpackt werden (4–8-facher Speicher). Deshalb: halbe Texturauflösung, keine Figurenschatten,
+// ohne BC-Kompression entpackt werden (4–8-facher Speicher). Deshalb: keine Figurenschatten,
 // kürzere Ladedistanzen, weniger zwischengespeicherte Gebiete. Nicht angefasst: HDR, Wasser an/aus, Kantenglättung
 // (andere Shader-Wege) und uGridsToLoad (Spielstände). Sichtweite und Gras regelt die automatische Qualität (tuner.js).
 const LITE_INI = [
-  'iTexMipMapSkip:Display=1', 'iMaxDecalsPerFrame:Display=2', 'iActorShadowCountInt:Display=0', 'iActorShadowCountExt:Display=0',
+  // iTexMipMapSkip (halbe Texturauflösung) bewusst nicht mehr: alle Texturen zusammen belegen am iPad nur ~70 MB
+  // (gemessen), die Ausfälle kamen nicht daher – und es machte Schrift in Pip-Boy und Menüs unleserlich.
+  'iMaxDecalsPerFrame:Display=2', 'iActorShadowCountInt:Display=0', 'iActorShadowCountExt:Display=0',
   'iShadowMapResolution:Display=256', 'fSpecularLODStartFade:Display=200', 'fShadowLODStartFade:Display=100',
   'fLightLODStartFade:Display=200', 'fDecalLOD1:Display=500', 'fDecalLOD2:Display=1000',
   'fTreeLoadDistance:TerrainManager=0', 'fBlockLoadDistanceLow:TerrainManager=25000', 'fBlockLoadDistance:TerrainManager=125000',
@@ -133,6 +151,16 @@ const LITE_INI = [
   'uInterior Cell Buffer:General=1', 'uExterior Cell Buffer:General=12', 'bPreemptivelyUnloadCells:General=1',
   'iPreloadSizeLimit:General=8388608', 'bSelectivePurgeUnusedOnFastTravel:General=1',
 ].join(';');
+// automatische Qualität: im Akku-Modus (30 Bilder/s) ist 30 das Ziel, sonst senkt sie die Sichtweite unnötig
+{
+  const f = path.join(www, 'tuner.js');
+  const from = "+query.get('target') || 60";
+  let t = fs.readFileSync(f, 'utf8');
+  if (!t.includes(from)) fail(`tuner.js: "${from}" nicht gefunden – tools/assemble.mjs anpassen`);
+  t = t.replace(from, "+query.get('target') || ((() => { try { return localStorage.getItem('fonv.fps') === '30'; } catch { return false; } })() ? 30 : 60)");
+  fs.writeFileSync(f, t);
+  for (const ext of ['.br', '.gz']) fs.rmSync(f + ext, { force: true });
+}
 const page = (cache) => game.replace('__STREAM_CACHE__', cache);
 fs.writeFileSync(path.join(www, 'game.html'), page('128'));
 const ipad = opt('--ipad-build');

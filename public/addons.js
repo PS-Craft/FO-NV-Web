@@ -8,6 +8,10 @@
 // - Menü: Taste F8 oder der Knopf ☰ oben in der Mitte (mit Maus unsichtbar, bis sie an den oberen Rand kommt; auf
 //   Touch-Geräten wie dem iPad ohne Tastatur immer leicht sichtbar).
 // - Anmeldung verloren (Netzwechsel o. Ä.): nach ein paar Sekunden zurück zur Anmeldung.
+// - Sauber beenden: "Speichern & verlassen" (Schnellspeichern, hochladen, zur App); beendet das Spiel sich selbst
+//   (Hauptmenü -> Quit), geht es ebenfalls zur App. Fällt die Grafik aus, wird zuerst schnellgespeichert.
+// - Hintergrund (App gewechselt, Bildschirm aus): das Spiel geht in die Pause, der Spielstand wird hochgeladen.
+// - Akku sparen: höchstens 30 Bilder/s (localStorage fonv.fps = 30; tools/assemble.mjs, Bildtaktung).
 // - Cheats laufen über die Spielkonsole (Module.ccall('fnv_console', …)), freigeschaltet per Cheat-Passwort.
 (function () {
   'use strict';
@@ -30,9 +34,30 @@
     '#fonv-btn { position:fixed; top:calc(env(safe-area-inset-top) + 4px); left:50%; transform:translateX(-50%); z-index:60;',
     '  width:44px; height:22px; border:0; border-radius:11px; background:rgba(20,16,12,.45); color:rgba(241,227,200,.8);',
     '  font:600 14px/22px -apple-system,system-ui,sans-serif; padding:0; touch-action:manipulation; }',
-    '#fonv-panel { position:fixed; top:calc(env(safe-area-inset-top) + 32px); left:50%; transform:translateX(-50%); z-index:60;',
-    '  width:min(92vw,420px); max-height:80dvh; overflow:auto; background:rgba(26,20,16,.96); color:#f1e3c8; border-radius:14px;',
-    '  padding:12px; box-shadow:0 10px 40px rgba(0,0,0,.6); font:15px/1.4 -apple-system,system-ui,sans-serif; }',
+    '#fonv-panel { position:fixed; top:calc(env(safe-area-inset-top) + 34px); left:50%; transform:translateX(-50%); z-index:60;',
+    '  width:min(94vw,460px); max-height:calc(100dvh - env(safe-area-inset-top) - 48px); overflow:auto; overscroll-behavior:contain;',
+    '  background:linear-gradient(180deg,rgba(38,30,22,.97),rgba(22,17,12,.97)); color:#f1e3c8; border-radius:18px;',
+    '  border:1px solid rgba(232,160,60,.22); padding:14px; box-shadow:0 18px 60px rgba(0,0,0,.65);',
+    '  font:15px/1.4 -apple-system,system-ui,sans-serif; -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }',
+    '#fonv-panel .hd { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 2px 10px; }',
+    '#fonv-panel .hd b { font-size:16px; letter-spacing:.04em; color:#e8a03c; }',
+    '#fonv-panel .hd span { font-size:12px; color:#b39d7c; font-variant-numeric:tabular-nums; }',
+    '#fonv-panel .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }',
+    '#fonv-panel .row.three { grid-template-columns:1fr 1fr 1fr; }',
+    '#fonv-panel .big { min-height:52px; font-size:16px; }',
+    '#fonv-panel .danger { background:#5a2a1e; }',
+    '#fonv-panel .sw { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:46px; padding:0 12px;',
+    '  background:#2c2219; border-radius:10px; margin-top:8px; }',
+    '#fonv-panel button.sw { width:100%; justify-content:space-between; text-align:left; padding:6px 12px; }',
+    '#fonv-panel .sw small { display:block; color:#b39d7c; font-size:12px; }',
+    '#fonv-panel .sw i { flex:none; width:44px; height:26px; border-radius:13px; background:#4a3a2a; position:relative; transition:background .15s; }',
+    '#fonv-panel .sw i::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#f1e3c8; transition:left .15s; }',
+    '#fonv-panel .sw.on i { background:#e8a03c; } #fonv-panel .sw.on i::after { left:21px; }',
+    '#fonv-panel details { margin-top:12px; } #fonv-panel summary { cursor:pointer; color:#b39d7c; font-size:13px; text-transform:uppercase; letter-spacing:.06em; padding:6px 2px; }',
+    '#fonv-busy { position:fixed; inset:0; z-index:72; background:rgba(10,8,6,.86); color:#f1e3c8; display:flex; align-items:center; justify-content:center;',
+    '  font:17px/1.45 -apple-system,system-ui,sans-serif; text-align:center; padding:24px; }',
+    '#fonv-busy .sp { width:36px; height:36px; border-radius:50%; border:3px solid rgba(232,160,60,.25); border-top-color:#e8a03c; margin:0 auto 14px; animation:fonvspin 0.9s linear infinite; }',
+    '@keyframes fonvspin { to { transform:rotate(360deg); } }',
     '#fonv-panel[hidden] { display:none; }',
     // Teile der öffentlichen Website (Reiter, Chat, Erklärtext, Links auf Seiten, die es hier nicht gibt)
     '#tabs, #chat, #about, #howmade, #sitenav { display:none !important; }',
@@ -355,19 +380,99 @@
   }
   function btnEl() { return document.getElementById('fonv-btn'); }
 
+  // ---- Spiel-Zustand, Schnellspeichern, Beenden ----------------------------------------------------------------
+  // Menü offen (Pause, Pip-Boy, Dialog, Hauptmenü): Kennzeichen im Speicher der FalloutNV.exe 1.4.0.525 (siehe ui()).
+  function menuOpen() {
+    var M = window.Module;
+    try { return !!(M && M.HEAPU8 && M.HEAPU8[0x11DEA2B] === 1); } catch (e) { return true; }
+  }
+  function tapKey(k) {
+    var M = window.Module;
+    if (!M || !M._fnv_key) return;
+    M._fnv_key(k, 1);
+    setTimeout(function () { M._fnv_key(k, 0); }, 120);
+  }
+  var busyEl = null;
+  function busy(text, buttons) {
+    if (!busyEl) { busyEl = el('div', { id: 'fonv-busy' }); document.body.appendChild(busyEl); }
+    busyEl.innerHTML = '<div style="max-width:460px">' + (buttons ? '' : '<div class="sp"></div>') + '<p>' + text + '</p>' +
+      (buttons || '') + '</div>';
+    busyEl.hidden = false;
+    return busyEl;
+  }
+  function newestSave() {
+    var l = window.fnvSaves ? window.fnvSaves.list() : [];
+    return l.reduce(function (a, f) { return !a || f.mtime > a.mtime ? f : a; }, null);
+  }
+  // Schnellspeichern (F5) und warten, bis der neue Stand auf dem Server liegt. false: das Spiel hat nicht gespeichert
+  // (geht nicht in Menüs, Dialogen, im Kampf) oder der Upload kam nicht durch.
+  async function quickSave(timeoutMs) {
+    if (!window.fnvSaves || !window.Module || !window.Module._fnv_key) return false;
+    var before = newestSave(), t0 = Date.now() / 1000;
+    tapKey(63);
+    var deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise(function (r) { setTimeout(r, 700); });
+      var n = newestSave();
+      if (!n || n.mtime < t0 - 1 || (before && n.path === before.path && n.mtime === before.mtime && n.size === before.size)) continue;
+      await syncSaves(true);
+      if (uploaded[n.path] === n.size + '|' + n.mtime) return n.path.slice(n.path.lastIndexOf('/') + 1).replace(/\.fos$/i, '');
+    }
+    return false;
+  }
+  var exiting = false;
+  async function leaveGame(save) {
+    if (exiting) return;
+    exiting = true;
+    panel.hidden = true;
+    var name = false;
+    if (save) {
+      busy('Spielstand wird gesichert …');
+      name = await quickSave(12000);
+    }
+    busy(save && !name ? 'Schnellspeichern ging gerade nicht (Menü, Dialog oder Kampf). Bisherige Spielstände werden hochgeladen …'
+      : 'Spielstände werden hochgeladen …');
+    await syncSaves(true);
+    if (save && !name) await new Promise(function (r) { setTimeout(r, 2500); });
+    location.href = './';
+  }
+  // das Spiel hat sich selbst beendet (Hauptmenü -> Quit): ExitProcess im Protokoll der Engine
+  function onGameExit() {
+    if (exiting) return;
+    exiting = true;
+    busy('Spiel beendet – zurück zur App …');
+    syncSaves(true).then(function () { setTimeout(function () { location.href = './'; }, 800); }, function () { location.href = './'; });
+  }
+
+  // App gewechselt, Bildschirm aus: im Spiel pausieren (Esc), damit nichts weiterläuft, während niemand zusieht –
+  // spart Akku und Wärme. Zurück geht es mit einem Tipp auf "Weiter".
+  var pausedForBackground = false;
+  function onHidden() {
+    if (!document.hidden || exiting || gpuLost) return;
+    if (store.get('fonv.autopause') !== '0' && window.fnvBoot && window.fnvBoot.ready && !menuOpen()) { tapKey(1); pausedForBackground = true; }
+    syncSaves(true);
+  }
+
   // ---- Grafikeinheit ausgefallen -----------------------------------------------------------------------------
   // Geht dem Gerät der Grafikspeicher aus (iPad), verliert die Seite ihre Grafikeinheit: das Bild friert ein, das
   // Spiel selbst läuft weiter. Statt eines eingefrorenen Bildes: sagen, was los ist, und neu laden lassen.
+  // Das Spiel selbst läuft danach weiter: deshalb zuerst schnellspeichern und hochladen, dann neu laden lassen.
   var gpuLost = false;
-  function gpuLostShow(why) {
-    if (gpuLost) return;
+  async function gpuLostShow(why) {
+    if (gpuLost || exiting) return;
     gpuLost = true;
-    var box = el('div', { id: 'fonv-lost' },
-      '<div><h3>Die Grafik ist ausgefallen</h3><p>Dem Gerät ist der Grafikspeicher ausgegangen. Dein letzter Spielstand ist gesichert, ' +
-      'sobald unten „Spielstand gesichert“ stand.</p><p class="muted">' + esc(why).slice(0, 160) + '</p>' +
-      '<button class="accent" id="fonv-reload">Spiel neu laden</button></div>');
+    if (panel) panel.hidden = true;
+    var box = el('div', { id: 'fonv-lost' }, '<div><h3>Die Grafik ist ausgefallen</h3><p id="fonv-lost-t">Spielstand wird gesichert …</p>' +
+      '<p class="muted">' + esc(why).slice(0, 160) + '</p><p><button class="accent" id="fonv-reload" hidden>Spiel neu laden</button> ' +
+      '<a href="./" style="color:#e8a03c;margin-left:10px">Zur App</a></p></div>');
     document.body.appendChild(box);
     document.getElementById('fonv-reload').addEventListener('click', function () { location.reload(); });
+    var name = menuOpen() ? false : await quickSave(15000);
+    await syncSaves(true);
+    document.getElementById('fonv-lost-t').textContent = name
+      ? 'Gesichert als „' + name + '“. Nach dem Neuladen: Hauptmenü → Weiter.'
+      : 'Schnellspeichern ging gerade nicht (Menü, Dialog oder Kampf). Deine bisherigen Spielstände sind gesichert.';
+    document.getElementById('fonv-reload').hidden = false;
   }
 
   // ---- Diagnose-Protokoll ---------------------------------------------------------------------------------
@@ -382,6 +487,7 @@
       rep.fonv = true;
       rep.add = function (kind, m) {
         var line = String(m);
+        if (/^\[web\] ExitProcess\(/.test(line)) onGameExit();
         if (/device lost|popErrorScope|^gpu: |abort|OOM|out of memory/i.test(line)) {
           if (diag.errs.length < 12) diag.errs.push(line.slice(0, 300));
           if (/device lost/i.test(line)) gpuLostShow(line);
@@ -433,27 +539,33 @@
 
   // ---- Panel ---------------------------------------------------------------------------------------------
   var panel, btn;
+  function sw(id, on, title, sub) {
+    return '<button class="sw' + (on ? ' on' : '') + '" data-a="' + id + '"><span>' + title + (sub ? '<small>' + sub + '</small>' : '') + '</span><i></i></button>';
+  }
   function paint() {
     var label = store.sget('fonv.cheats');
+    var fpsTxt = (document.getElementById('status') || {}).textContent || '';
+    var m = /(\d+) fps/.exec(fpsTxt);
     var html =
-      '<div class="g"><a class="b accent" href="./">Zur App</a><button data-a="close">' + (TOUCH ? 'Schließen' : 'Schließen (F8)') + '</button>' +
-      '<button data-a="fs"' + (mode() === 'fullscreen' ? ' class="accent"' : '') + '>' + (isFullscreen() ? 'Vollbild aus' : 'Vollbild') + '</button>' +
+      '<div class="hd"><b>FALLOUT: NEW VEGAS</b><span>' + (m ? m[1] + ' fps' : '') + (window.fonvLocal ? ' · vom Gerät' : ' · gestreamt') + '</span></div>' +
+      '<div class="row"><button class="accent big" data-a="close">Weiterspielen</button><button class="big" data-a="savequit">Speichern &amp; verlassen</button></div>' +
+      '<div class="row three" style="margin-top:8px"><button data-key="1">Pause</button><button data-key="15">Pip-Boy</button><button data-key="63">Schnell&shy;speichern</button></div>' +
+      '<h3>Anzeige</h3><div class="row three"><button data-a="fs"' + (mode() === 'fullscreen' ? ' class="accent"' : '') + '>Vollbild</button>' +
       '<button data-a="win"' + (mode() === 'window' ? ' class="accent"' : '') + '>Fenster</button>' +
-      '<button data-a="classic"' + (mode() === 'classic' ? ' class="accent"' : '') + '>Mit Leiste</button>' +
-      (TOUCH ? '<button data-a="touch"' + (touchOn() ? ' class="accent"' : '') + '>Touch-Steuerung: ' + (touchOn() ? 'An' : 'Aus') + '</button>' : '') + '</div>' +
-      (TOUCH ? '<p class="muted">Tastatur und Maus gehen immer, auch zusammen mit Touch. „Aus“ blendet Stick und Knöpfe aus.</p>' : '') +
-      '<h3>Tasten</h3><div class="g"><button data-key="1">Esc – Pause/Menü</button><button data-key="15">Tab – Pip-Boy</button>' +
-      '<button data-key="63">F5 – Schnellspeichern</button><button data-key="67">F9 – Schnellladen</button></div>' +
-      '<p class="muted">Ohne Esc-Taste (iPad-Tastatur): Cmd + Punkt.</p>' +
-      '<h3>Cheats</h3>';
+      '<button data-a="classic"' + (mode() === 'classic' ? ' class="accent"' : '') + '>Mit Leiste</button></div>' +
+      sw('battery', store.get('fonv.fps') === '30', 'Akku sparen', 'höchstens 30 Bilder/s, weniger Wärme') +
+      sw('autopause', store.get('fonv.autopause') !== '0', 'Pause im Hintergrund', 'beim App-Wechsel automatisch pausieren') +
+      (TOUCH ? sw('touch', touchOn(), 'Touch-Steuerung', 'Stick und Knöpfe; Tastatur und Maus gehen immer') : '') +
+      '<p class="muted">' + (TOUCH ? 'iPad-Tastatur ohne Esc: Cmd + Punkt. ' : 'Menü: F8. ') + 'Schnellladen: F9.</p>' +
+      '<details' + (label ? ' open' : '') + '><summary>Cheats</summary>';
     if (label) {
-      html += '<div class="g">' + cheats.map(function (c) { return '<button data-cmd="' + esc(c.cmd) + '" title="' + esc(c.help) + '">' + esc(c.label) + '</button>'; }).join('') + '</div>' +
+      html += '<div class="row">' + cheats.map(function (c) { return '<button data-cmd="' + esc(c.cmd) + '" title="' + esc(c.help) + '">' + esc(c.label) + '</button>'; }).join('') + '</div>' +
         '<form data-f="cmd"><input name="c" placeholder="Eigener Konsolenbefehl" autocomplete="off" autocapitalize="off" spellcheck="false"><button>Los</button></form>' +
         '<p class="muted">Freigeschaltet: ' + esc(label) + '</p>';
     } else {
-      html += '<p class="muted">Gesperrt – Cheat-Passwort eingeben:</p>' +
-        '<form data-f="unlock"><input name="p" type="password" placeholder="Cheat-Passwort" autocomplete="off"><button class="accent">Freischalten</button></form>';
+      html += '<form data-f="unlock"><input name="p" type="password" placeholder="Cheat-Passwort" autocomplete="off"><button class="accent">Freischalten</button></form>';
     }
+    html += '</details><div class="row" style="margin-top:12px"><a class="b" href="./">Zur App (ohne Speichern)</a><button class="danger" data-a="quit">Spiel beenden</button></div>';
     panel.innerHTML = html;
   }
   function onClick(e) {
@@ -464,15 +576,27 @@
     else if (a === 'win') setMode('window');
     else if (a === 'classic') setMode('classic');
     else if (a === 'touch') { setTouch(!touchOn()); toast(touchOn() ? 'Touch-Steuerung an' : 'Touch-Steuerung aus – Tastatur/Maus'); }
-    else if (a === 'close') { panel.hidden = true; return; }
-    else if (t.hasAttribute('data-key')) {
-      var M = window.Module, k = +t.getAttribute('data-key');
+    else if (a === 'battery') { store.set('fonv.fps', store.get('fonv.fps') === '30' ? '60' : '30'); toast(store.get('fonv.fps') === '30' ? 'Akku sparen: höchstens 30 Bilder/s' : 'Volle Bildrate'); }
+    else if (a === 'autopause') { store.set('fonv.autopause', store.get('fonv.autopause') === '0' ? '1' : '0'); }
+    else if (a === 'savequit') { leaveGame(true); return; }
+    else if (a === 'quit') {
+      if (t.getAttribute('data-sure')) { leaveGame(false); return; }
+      t.setAttribute('data-sure', '1'); t.textContent = 'Wirklich? Nochmal tippen'; return;
+    }
+    else if (a === 'close') {
       panel.hidden = true;
-      if (M && M._fnv_key) { M._fnv_key(k, 1); setTimeout(function () { M._fnv_key(k, 0); }, 120); }
+      if (pausedForBackground && menuOpen()) { tapKey(1); }
+      pausedForBackground = false;
+      return;
+    }
+    else if (t.hasAttribute('data-key')) {
+      var k = +t.getAttribute('data-key');
+      panel.hidden = true;
+      tapKey(k);
       return;
     }
     else if (t.hasAttribute('data-cmd')) runCommand(t.getAttribute('data-cmd'));
-    setTimeout(paint, 300);
+    setTimeout(paint, 200);
   }
   function onSubmit(e) {
     e.preventDefault();
@@ -531,7 +655,7 @@
     });
     btn.addEventListener('click', togglePanel);
     setInterval(function () { syncSaves(); }, 3000);
-    document.addEventListener('visibilitychange', function () { if (document.hidden) syncSaves(true); });
+    document.addEventListener('visibilitychange', onHidden);
     window.addEventListener('pagehide', function () { syncSaves(true); });
     if (m !== 'classic') toast(TOUCH ? 'Menü: ☰ oben in der Mitte antippen' : 'Menü: F8 oder Maus an den oberen Rand');
     setInterval(checkAuth, 20000);
