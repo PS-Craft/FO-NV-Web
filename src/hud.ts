@@ -3,6 +3,7 @@ export function startHud(el: HTMLElement): void {
   let frames = 0;
   let last = performance.now();
   const tick = (t: number) => {
+    if (!el.isConnected) return;       // die Oberfläche wurde neu aufgebaut: diese Schleife beenden
     frames++;
     if (t - last >= 1000) {
       const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;

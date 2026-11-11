@@ -460,7 +460,10 @@ function renderSystem(v: HTMLElement): void {
 
 // ---- Start ---------------------------------------------------------------------------------------------
 async function start(): Promise<void> {
-  const found = await detectServer();
+  let found = await detectServer();
+  // kommt schon von der Anmelde-Weiterleitung und PHP sieht trotzdem keinen Benutzer: Fehlerkarte statt Endlosschleife
+  if (found && !('status' in found) && !found.user && new URLSearchParams(location.search).has('login'))
+    found = { status: 200, text: 'Apache hat die Anmeldung angenommen, aber PHP sieht keinen Benutzer (die Anmeldung kommt nicht bei PHP an oder der Passwortschutz in der .htaccess ist nicht aktiv).' };
   if (found && 'status' in found && found.status === 401) return relogin();
   if (found && 'status' in found) {
     // eigener Server, aber die PHP-Schnittstelle antwortet nicht richtig: klar sagen statt Diagnose-Seite

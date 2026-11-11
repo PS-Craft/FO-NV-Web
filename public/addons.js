@@ -22,7 +22,8 @@
   var css = [
     'html.fonv-borderless, html.fonv-borderless body { background:#000; height:100%; margin:0; overflow:hidden; }',
     'html.fonv-borderless #wrap { max-width:none; padding:0; height:100%; display:flex; align-items:center; justify-content:center; }',
-    'html.fonv-borderless #bar, html.fonv-borderless #saves { display:none; }',
+    'html.fonv-borderless #bar, html.fonv-borderless #saves, html.fonv-borderless #log { display:none; }',
+    'html.fonv-borderless #gamePane { width:100%; display:flex; justify-content:center; }',
     'html.fonv-clean #fonv-btn { opacity:0; transition:opacity .2s; }',
     'html.fonv-clean.fonv-peek #fonv-btn, html.fonv-clean #fonv-btn:focus-visible { opacity:1; }',
     'html.fonv-borderless #stage { width:min(100vw, calc(100dvh * 16 / 9)); }',
@@ -33,6 +34,12 @@
     '  width:min(92vw,420px); max-height:80dvh; overflow:auto; background:rgba(26,20,16,.96); color:#f1e3c8; border-radius:14px;',
     '  padding:12px; box-shadow:0 10px 40px rgba(0,0,0,.6); font:15px/1.4 -apple-system,system-ui,sans-serif; }',
     '#fonv-panel[hidden] { display:none; }',
+    // Teile der öffentlichen Website (Reiter, Chat, Erklärtext, Links auf Seiten, die es hier nicht gibt)
+    '#tabs, #chat, #about, #howmade, #sitenav { display:none !important; }',
+    '#fonv-lost { position:fixed; inset:0; z-index:70; background:rgba(10,8,6,.88); color:#f1e3c8; display:flex; align-items:center; justify-content:center;',
+    '  font:16px/1.45 -apple-system,system-ui,sans-serif; text-align:center; padding:24px; }',
+    '#fonv-lost div { max-width:460px; } #fonv-lost h3 { font-size:20px; margin:0 0 10px; } #fonv-lost .muted { color:#b39d7c; font-size:13px; }',
+    '#fonv-lost button { min-height:48px; border:0; border-radius:12px; background:#e8a03c; color:#1a1410; font:600 16px -apple-system,system-ui,sans-serif; padding:0 22px; }',
     'html.fonv-notouch #touch { display:none !important; }',
     'html.fonv-notouch #screen { pointer-events:auto !important; }',
     'html.fonv-touch.fonv-notouch #screen { cursor:none; }',
@@ -60,12 +67,12 @@
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   var toastTimer = 0;
-  function toast(text) {
+  function toast(text, ms) {
     var t = document.getElementById('fonv-toast') || document.body.appendChild(el('div', { id: 'fonv-toast' }));
     t.textContent = text;
     t.style.opacity = '1';
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.style.opacity = '0'; }, 2200);
+    toastTimer = setTimeout(function () { t.style.opacity = '0'; }, ms || 2200);
   }
 
   // ---- Anzeige: Vollbild / Fenster / Mit Leiste ------------------------------------------------------------
@@ -83,11 +90,12 @@
     if (m !== 'fullscreen' && isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
   }
   function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
-  function enterFullscreen() {
+  function enterFullscreen(quiet) {
     var d = document.documentElement;
-    if (d.requestFullscreen) d.requestFullscreen({ navigationUI: 'hide' }).catch(function () { toast('Vollbild nicht möglich – App zum Home-Bildschirm hinzufügen'); });
+    var fail = function () { if (!quiet) toast('Vollbild nicht möglich – App zum Home-Bildschirm hinzufügen'); };
+    if (d.requestFullscreen) d.requestFullscreen({ navigationUI: 'hide' }).catch(fail);
     else if (d.webkitRequestFullscreen) d.webkitRequestFullscreen();
-    else toast('Vollbild nicht möglich – App zum Home-Bildschirm hinzufügen');
+    else fail();
   }
   function toggleFullscreen() {
     if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
@@ -117,15 +125,19 @@
   var CH = 8 << 20;
   function post(url, body) { return fetch(url, { method: 'POST', credentials: 'same-origin', body: body || null }); }
   async function upload(path, bytes) {
-    var p = encodeURIComponent(path);
+    // erst unter anderem Namen hochladen, dann umbenennen: bricht der Upload ab, bleibt der bisherige Stand heil
+    var p = encodeURIComponent(path + '.up');
     var r = await post('/fs/truncate?p=' + p);
     if (!r.ok) throw new Error('Server ' + r.status);
     for (var off = 0; off < bytes.length; off += CH) {
       r = await post('/fs/write?p=' + p + '&o=' + off, bytes.subarray(off, off + CH));
       if (!r.ok) throw new Error('Server ' + r.status);
     }
+    r = await post('/fs/rename?p=' + p + '&q=' + encodeURIComponent(path));
+    if (!r.ok) throw new Error('Server ' + r.status);
   }
-  async function syncSaves() {
+  // force (Tab wird verlassen): nicht erst den nächsten Durchlauf abwarten – iPadOS friert den Tab gleich ein
+  async function syncSaves(force) {
     if (saving || !window.fnvSaves) return;
     saving = true;
     try {
@@ -133,7 +145,11 @@
       for (var i = 0; i < list.length; i++) {
         var f = list[i], sig = f.size + '|' + f.mtime;
         if (uploaded[f.path] === sig) continue;
-        if (lastSeen[f.path] !== sig) { lastSeen[f.path] = sig; continue; }   // erst hochladen, wenn fertig geschrieben
+        if (lastSeen[f.path] !== sig) {
+          lastSeen[f.path] = sig;
+          // erst hochladen, wenn fertig geschrieben: gleich nur, wenn die Datei seit 2 s unverändert ist
+          if (!(force === true && Date.now() / 1000 - f.mtime >= 2)) continue;
+        }
         var bytes = window.fnvSaves.read(f.path);
         if (!bytes) continue;
         await upload(f.path, bytes);
@@ -149,14 +165,25 @@
   // ---- Anmeldung -----------------------------------------------------------------------------------------
   // Nach einem Netzwechsel kennt der Server die Anmeldung manchmal nicht mehr (401): dann nach ein paar Sekunden zur
   // Startseite, wo der Browser wieder nach Name und Passwort fragt. Ohne Netz (offline) bleibt das Spiel einfach offen.
-  var leaving = false;
+  // Kommt das Spiel vom Gerät, läuft es ohne Server weiter: dann nur ein Hinweis (Spielstände bleiben auf dem Gerät),
+  // neu anmelden über Menü ☰ -> Zur App. Gestreamt geht ohne Anmeldung nichts mehr: erst beim zweiten 401 in Folge
+  // (kein Ausrutscher) die Spielstände sichern, was noch geht, und zur Anmeldung.
+  var leaving = false, authLost = 0;
   function checkAuth() {
     if (leaving) return;
     fetch('./api/me', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
-      if (r.status !== 401 || leaving) return;
+      if (leaving) return;
+      if (r.status !== 401) {
+        if (authLost) toast('Wieder angemeldet – Spielstände werden gesichert');
+        authLost = 0;
+        return;
+      }
+      authLost++;
+      if (window.fonvLocal) { toast('Anmeldung abgelaufen – Spielstände bleiben auf dem Gerät. Neu anmelden: Menü ☰ → Zur App', 8000); return; }
+      if (authLost < 2) { toast('Anmeldung abgelaufen – Spielstände werden gerade nicht gesichert', 8000); return; }
       leaving = true;
-      toast('Anmeldung abgelaufen – gleich geht es zur Anmeldung');
-      setTimeout(function () { location.replace('./?login=' + Date.now()); }, 4000);
+      toast('Anmeldung abgelaufen – gleich geht es zur Anmeldung', 6000);
+      setTimeout(function () { location.replace('./?login=' + Date.now()); }, 5000);
     }, function () { /* offline */ });
   }
 
@@ -191,8 +218,15 @@
     };
     var keyTo = function (e, down) {
       var d = DIK[e.code], M = window.Module;
-      if (e.metaKey && e.code === 'Period') d = 1;              // iPad-Tastaturen ohne Esc: Cmd+Punkt
-      else if (e.metaKey) return;
+      if (e.metaKey) {                                          // iPad-Tastaturen ohne Esc: Cmd+Punkt
+        // antippen statt halten: das Loslassen kommt mit gedrückter Cmd-Taste nicht verlässlich an
+        if (e.code === 'Period' && down && !e.repeat && M && M._fnv_key && !(panel && e.target instanceof Node && panel.contains(e.target))) {
+          e.preventDefault();
+          M._fnv_key(1, 1);
+          setTimeout(function () { M._fnv_key(1, 0); }, 120);
+        }
+        return;
+      }
       if (!d || !M || !M._fnv_key || typing(e)) return;   // Spielfläche mit Fokus: das macht die Spielseite
       e.preventDefault();
       if (!(down && e.repeat)) M._fnv_key(d, down ? 1 : 0);
@@ -210,7 +244,7 @@
       var dv = new DataView(M.HEAPU8.buffer), ptr = dv.getUint32(0x11D8A80, true);
       if (!ptr || ptr + 0x44 > M.HEAPU8.length) return null;
       var x = dv.getFloat32(ptr + 0x38, true), y = dv.getFloat32(ptr + 0x40, true);
-      if (!(x >= -8 && x <= 1288 && y >= -8 && y <= 728)) return null;
+      if (!(x >= -8 && x <= canvas.width + 8 && y >= -8 && y <= canvas.height + 8)) return null;
       return { menu: M.HEAPU8[0x11DEA2B] === 1, x: x, y: y };
     };
     var want = null, moving = false;
@@ -239,7 +273,8 @@
     };
     var gamePoint = function (e) {
       var r = canvas.getBoundingClientRect();
-      return { x: Math.max(0, Math.min(1280, (e.clientX - r.left) / r.width * 1280)), y: Math.max(0, Math.min(720, (e.clientY - r.top) / r.height * 720)) };
+      var w = canvas.width, h = canvas.height;                 // die Auflösung, in der das Spiel rechnet (z. B. 960x540)
+      return { x: Math.max(0, Math.min(w, (e.clientX - r.left) / r.width * w)), y: Math.max(0, Math.min(h, (e.clientY - r.top) / r.height * h)) };
     };
     var press = function (button, down) { var M = window.Module; if (M && M._fnv_mouse) M._fnv_mouse(0, 0, 0, button, down ? 1 : 0); };
 
@@ -250,7 +285,9 @@
       pad.addEventListener('pointerdown', function (e) {
         var u = ui();
         if (e.pointerType === 'mouse' || finger || !u || !u.menu || e.target.closest('button')) return;
-        e.stopPropagation(); e.preventDefault();
+        e.stopImmediatePropagation(); e.preventDefault();
+        var au = window.fnvAudio;                               // das erledigt sonst die Spielseite beim Antippen
+        if (au && au.ctx && au.ctx.state !== 'running') au.ctx.resume();
         try { pad.setPointerCapture(e.pointerId); } catch (err) { /* egal */ }
         finger = { id: e.pointerId, down: false, up: false, at: 0 };
         var g = gamePoint(e), f = finger;
@@ -263,12 +300,12 @@
       }, true);
       pad.addEventListener('pointermove', function (e) {
         if (!finger || e.pointerId !== finger.id) return;
-        e.stopPropagation();
+        e.stopImmediatePropagation();
         if (finger.down) { var g = gamePoint(e); moveTo(g.x, g.y); }
       }, true);
       var lift = function (e) {
         if (!finger || e.pointerId !== finger.id) return;
-        e.stopPropagation();
+        e.stopImmediatePropagation();
         var f = finger;
         finger = null;
         f.up = true;
@@ -318,58 +355,19 @@
   }
   function btnEl() { return document.getElementById('fonv-btn'); }
 
-  // ---- Sparsame Spiel-Einstellungen (iPad-Variante) ---------------------------------------------------------
-  // iPadOS schließt den Tab, wenn er zu viel Speicher braucht – ohne Fehlermeldung, mitten im Spiel. Die iPad-Seite
-  // (window.fonvQuality = 'low') legt dem Spiel deshalb vor dem Start eine eigene Fallout.ini in seinen Ordner
-  // (nur in diesem Tab): Fallout_default.ini mit kürzeren Sichtweiten, halber Texturauflösung, ohne Figurenschatten
-  // und mit weniger zwischengespeicherten Gebieten. Bewusst NICHT geändert: alles, was andere Shader-Wege einschaltet
-  // (HDR, Wasser-Spiegelung an/aus, Kantenglättung) und uGridsToLoad (Spielstände hängen daran).
-  var LITE = {
-    General: { 'uInterior Cell Buffer': 1, 'uExterior Cell Buffer': 12, bPreemptivelyUnloadCells: 1, iPreloadSizeLimit: 8388608, bSelectivePurgeUnusedOnFastTravel: 1 },
-    Display: { iTexMipMapSkip: 1, iMaxDecalsPerFrame: 2, iActorShadowCountInt: 0, iActorShadowCountExt: 0, iShadowMapResolution: 256,
-      fSpecularLODStartFade: '200.0000', fShadowLODStartFade: '100.0000', fLightLODStartFade: '200.0000', fDecalLOD1: '500.0000', fDecalLOD2: '1000.0000' },
-    LOD: { fLODFadeOutMultActors: '3.0', fLODFadeOutMultObjects: '3.0', fLODFadeOutMultItems: '2.0' },
-    TerrainManager: { fTreeLoadDistance: '0.0000', fBlockLoadDistanceLow: '25000.0000', fBlockLoadDistance: '125000.0000', fSplitDistanceMult: '0.7500', fHighBlockLoadDistanceLow: '20000.0000' },
-    Grass: { fGrassStartFadeDistance: '0.0000' },
-    Water: { iWaterReflectWidth: 256, iWaterReflectHeight: 256 },
-  };
-  var lite = { on: window.fonvQuality === 'low' && store.get('fonv.lite') !== '0', ini: null, applied: '' };
-  function mergeIni(text, over) {
-    var lines = text.split(/\r?\n/), out = [], sec = '', todo = JSON.parse(JSON.stringify(over));
-    var flush = function () {                                  // fehlende Schlüssel am Ende des Abschnitts ergänzen
-      var rest = todo[sec];
-      if (rest) for (var k in rest) out.push(k + '=' + rest[k]);
-      delete todo[sec];
-    };
-    for (var i = 0; i < lines.length; i++) {
-      var l = lines[i], m = /^\s*\[([^\]]+)\]/.exec(l);
-      if (m) { flush(); sec = m[1]; out.push(l); continue; }
-      var kv = /^\s*([^=;]+?)\s*=/.exec(l), o = todo[sec];
-      if (kv && o) for (var key in o) if (key.toLowerCase() === kv[1].toLowerCase()) { l = key + '=' + o[key]; delete o[key]; break; }
-      out.push(l);
-    }
-    flush();
-    for (var s2 in todo) { out.push('[' + s2 + ']'); for (var k2 in todo[s2]) out.push(k2 + '=' + todo[s2][k2]); }
-    return out.join('\r\n');
-  }
-  function liteInit() {
-    if (!lite.on) return;
-    // früh holen (das Spiel braucht mehrere Sekunden bis zum Start); Bytes 1:1 als Zeichen, damit Umlaute heil bleiben
-    var p = encodeURIComponent('/game/Fallout_default.ini');
-    fetch('/fs/stat?p=' + p, { credentials: 'same-origin' }).then(function (r) { return r.json(); })
-      .then(function (st) { return fetch('/fs/read?p=' + p + '&o=0&n=' + st.size + '&v=' + st.mtime, { credentials: 'same-origin' }); })
-      .then(function (r) { return r.arrayBuffer(); })
-      .then(function (b) { var u = new Uint8Array(b), t = ''; for (var i = 0; i < u.length; i++) t += String.fromCharCode(u[i]); lite.ini = mergeIni(t, LITE); })
-      .catch(function (e) { lite.applied = 'ini nicht geladen: ' + e; });
-    window.fonvRuntime = function () {
-      var M = window.Module;
-      if (!lite.ini || !M || !M._fnv_docs_put || !M._malloc) { lite.applied = lite.applied || 'ini kam zu spät'; return; }
-      var n = lite.ini.length, d = M._malloc(n) >>> 0;
-      for (var i = 0; i < n; i++) M.HEAPU8[d + i] = lite.ini.charCodeAt(i) & 255;
-      var ok = M.ccall('fnv_docs_put', 'number', ['string', 'number', 'number'], ['/docs/My Games/FalloutNV/Fallout.ini', d, n]);
-      M._free(d);
-      lite.applied = ok ? 'sparsame Einstellungen aktiv' : 'Fallout.ini nicht angenommen';
-    };
+  // ---- Grafikeinheit ausgefallen -----------------------------------------------------------------------------
+  // Geht dem Gerät der Grafikspeicher aus (iPad), verliert die Seite ihre Grafikeinheit: das Bild friert ein, das
+  // Spiel selbst läuft weiter. Statt eines eingefrorenen Bildes: sagen, was los ist, und neu laden lassen.
+  var gpuLost = false;
+  function gpuLostShow(why) {
+    if (gpuLost) return;
+    gpuLost = true;
+    var box = el('div', { id: 'fonv-lost' },
+      '<div><h3>Die Grafik ist ausgefallen</h3><p>Dem Gerät ist der Grafikspeicher ausgegangen. Dein letzter Spielstand ist gesichert, ' +
+      'sobald unten „Spielstand gesichert“ stand.</p><p class="muted">' + esc(why).slice(0, 160) + '</p>' +
+      '<button class="accent" id="fonv-reload">Spiel neu laden</button></div>');
+    document.body.appendChild(box);
+    document.getElementById('fonv-reload').addEventListener('click', function () { location.reload(); });
   }
 
   // ---- Diagnose-Protokoll ---------------------------------------------------------------------------------
@@ -383,12 +381,20 @@
       var add = rep.add;
       rep.fonv = true;
       rep.add = function (kind, m) {
-        if (!/^\[(vorbis|d3d9|mmio)\]/.test(m)) { diag.lines.push(String(m).slice(0, 160)); if (diag.lines.length > 8) diag.lines.shift(); }
+        var line = String(m);
+        if (/device lost|popErrorScope|^gpu: |abort|OOM|out of memory/i.test(line)) {
+          if (diag.errs.length < 12) diag.errs.push(line.slice(0, 300));
+          if (/device lost/i.test(line)) gpuLostShow(line);
+        } else if (!/^\[(vorbis|d3d9|mmio|dsound)\]|^renderer: /.test(line)) { diag.lines.push(line.slice(0, 160)); if (diag.lines.length > 8) diag.lines.shift(); }
         return add.apply(this, arguments);
       };
     }
     window.addEventListener('error', function (e) { diag.errs.push(String(e.message || e.type).slice(0, 200)); diagTick(true); });
-    window.addEventListener('unhandledrejection', function (e) { diag.errs.push(String((e.reason && e.reason.message) || e.reason).slice(0, 200)); });
+    window.addEventListener('unhandledrejection', function (e) {
+      var why = String((e.reason && e.reason.message) || e.reason);
+      if (diag.errs.length < 12) diag.errs.push(why.slice(0, 200));
+      if (/popErrorScope|device (is )?lost/i.test(why)) gpuLostShow(why);
+    });
     document.addEventListener('visibilitychange', function () { diagTick(true); });
   }
   function diagTick(force) {
@@ -404,7 +410,7 @@
     if (diag.n === 0) e.dev = { ua: navigator.userAgent, page: location.pathname + location.search, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
       cores: navigator.hardwareConcurrency, mem: navigator.deviceMemory, touch: navigator.maxTouchPoints, quality: b.quality, env: window.fonvEnv,
       standalone: !!navigator.standalone, display: mode() };
-    e.lite = lite.applied || undefined;
+    e.res = (function () { var c = document.getElementById('screen'); return c ? c.width + 'x' + c.height : ''; })();
     var sig = [e.text, e.stage, e.mb, e.fail, e.hidden, e.status.replace(/\d+ fps/, 'fps')].join('|');
     if (!force && sig === diag.sig && !e.errs.length && !e.log.length && diag.n % 6 !== 0) { diag.n++; return; }
     diag.sig = sig;
@@ -483,12 +489,15 @@
     document.documentElement.classList.toggle('fonv-borderless', m !== 'classic');
     document.documentElement.classList.toggle('fonv-clean', m !== 'classic');
     // Vollbild braucht eine Geste: beim ersten Tippen/Klicken/Tastendruck (z. B. auf "Start") einmal versuchen
+    // pointerup statt pointerdown: nur das gilt bei Touch als Nutzer-Geste. Die App vom Home-Bildschirm ist schon
+    // bildschirmfüllend; Esc soll niemanden zurück ins Vollbild ziehen.
     var fsTried = false;
-    ['pointerdown', 'keydown'].forEach(function (ev) {
-      document.addEventListener(ev, function () {
-        if (fsTried || mode() !== 'fullscreen' || isFullscreen()) return;
+    var installed = !!navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches);
+    ['pointerup', 'keydown'].forEach(function (ev) {
+      document.addEventListener(ev, function (e) {
+        if (installed || fsTried || mode() !== 'fullscreen' || isFullscreen() || e.key === 'Escape') return;
         fsTried = true;
-        enterFullscreen();
+        enterFullscreen(true);
       }, true);
     });
     // F8: Menü auf/zu (vor dem Spiel abfangen)
@@ -518,11 +527,11 @@
       btn.addEventListener(ev, function (e) { e.stopPropagation(); });
     });
     btn.addEventListener('click', togglePanel);
-    setInterval(syncSaves, 3000);
-    document.addEventListener('visibilitychange', function () { if (document.hidden) syncSaves(); });
+    setInterval(function () { syncSaves(); }, 3000);
+    document.addEventListener('visibilitychange', function () { if (document.hidden) syncSaves(true); });
+    window.addEventListener('pagehide', function () { syncSaves(true); });
     if (m !== 'classic') toast(TOUCH ? 'Menü: ☰ oben in der Mitte antippen' : 'Menü: F8 oder Maus an den oberen Rand');
     setInterval(checkAuth, 20000);
-    liteInit();
     inputInit();
     diagHook();
     diagTick(true);

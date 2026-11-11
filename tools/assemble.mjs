@@ -61,13 +61,22 @@ const patch = (from, to, what) => {
 patch('<script src="precheck.js"></script>', `<script>
 window.fonvLocal = (function () { try { return localStorage.getItem('fonv.offline') === '1' && !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch (e) { return false; } })();
 window.fonvEnv = { FNV_FS_CACHE_MB: window.fonvLocal ? '32' : '__STREAM_CACHE__' };
+// iPad-Variante (fonvLite, unten gesetzt): sparsame Spiel-Einstellungen über FNV_INI der Engine; abschaltbar mit
+// localStorage fonv.lite = 0. Die kleinere Auflösung nur, solange die automatische Qualität keine eigene gewählt hat.
+try {
+  if (window.fonvLite && localStorage.getItem('fonv.lite') !== '0')
+    window.fonvEnv.FNV_INI = window.fonvLite + (+(localStorage.getItem('fnv.tuner.res') || 0) ? '' : ';iSize W:Display=960;iSize H:Display=540');
+} catch (e) { /* privater Modus */ }
 </script>
 <script src="precheck.js"></script>`, 'precheck.js');
 // iPad-Variante: immer die kleinen Archive. Die iPad-Grafik kann die komprimierten Texturen nicht direkt nutzen
 // (kein BC), sie werden entpackt und brauchen ein Vielfaches an Speicher – mit "High" schließt iPadOS den Tab.
 patch("const qualityParam = query.get('quality') ||", "const qualityParam = query.get('quality') || window.fonvQuality ||", 'Qualität');
-// Einsprung für addons.js, bevor das Spiel selbst startet (sparsame Einstellungen für die iPad-Variante)
-patch('onRuntimeInitialized: () => { log(', 'onRuntimeInitialized: () => { try { window.fonvRuntime && window.fonvRuntime(); } catch (e) { console.warn(e); } log(', 'onRuntimeInitialized');
+// Chat der öffentlichen Seite: auf dem privaten Server nicht laden (die Reiter blendet addons.js aus)
+game = game.replace(/<script src="chat\.js"><\/script>\s*/, '');
+// Seiten der öffentlichen Website (Impressum, Werbung …) gehören nicht auf den privaten Server
+for (const f of ['about.html', 'contact.html', 'how-to-play.html', 'privacy.html', 'terms.html', 'chat.js'])
+  for (const ext of ['', '.br', '.gz']) fs.rmSync(path.join(www, f + ext), { force: true });
 patch('const env = {};', 'const env = Object.assign({}, window.fonvEnv);', 'env');
 patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät geladen' : 'downloaded'}` + (boot.file", 'Ladeanzeige');
 // Geräte-Check der Spielseite: mit Daten vom Gerät weder die Leitung messen noch vor langsamer Verbindung warnen
@@ -85,6 +94,22 @@ patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät gelade
   fs.writeFileSync(f, pc);
   for (const ext of ['.br', '.gz']) fs.rmSync(f + ext, { force: true });   // sonst liefert der Server die alte Fassung
 }
+// Sparsame Einstellungen der iPad-Variante ("Schlüssel:Abschnitt=Wert", FNV_INI in port/recomp/pal_kernel.cpp).
+// Protokoll vom iPad: der Tab wurde mitten im Spiel geschlossen bzw. die Grafikeinheit fiel aus (createBindGroup
+// scheitert, "popErrorScope failed") – der Grafikspeicher reicht dort nicht für die PC-Standardwerte, weil Texturen
+// ohne BC-Kompression entpackt werden (4–8-facher Speicher). Deshalb: halbe Texturauflösung, keine Figurenschatten,
+// kürzere Ladedistanzen, weniger zwischengespeicherte Gebiete. Nicht angefasst: HDR, Wasser an/aus, Kantenglättung
+// (andere Shader-Wege) und uGridsToLoad (Spielstände). Sichtweite und Gras regelt die automatische Qualität (tuner.js).
+const LITE_INI = [
+  'iTexMipMapSkip:Display=1', 'iMaxDecalsPerFrame:Display=2', 'iActorShadowCountInt:Display=0', 'iActorShadowCountExt:Display=0',
+  'iShadowMapResolution:Display=256', 'fSpecularLODStartFade:Display=200', 'fShadowLODStartFade:Display=100',
+  'fLightLODStartFade:Display=200', 'fDecalLOD1:Display=500', 'fDecalLOD2:Display=1000',
+  'fTreeLoadDistance:TerrainManager=0', 'fBlockLoadDistanceLow:TerrainManager=25000', 'fBlockLoadDistance:TerrainManager=125000',
+  'fSplitDistanceMult:TerrainManager=0.75', 'fHighBlockLoadDistanceLow:TerrainManager=20000',
+  'iWaterReflectWidth:Water=256', 'iWaterReflectHeight:Water=256',
+  'uInterior Cell Buffer:General=1', 'uExterior Cell Buffer:General=12', 'bPreemptivelyUnloadCells:General=1',
+  'iPreloadSizeLimit:General=8388608', 'bSelectivePurgeUnusedOnFastTravel:General=1',
+].join(';');
 const page = (cache) => game.replace('__STREAM_CACHE__', cache);
 fs.writeFileSync(path.join(www, 'game.html'), page('128'));
 const ipad = opt('--ipad-build');
@@ -101,8 +126,7 @@ if (ipad) {
   }
   for (const f of fs.readdirSync(ipad)) if (/^fnv_web\.(js|wasm)(\.(br|gz))?$/.test(f)) fs.copyFileSync(path.join(ipad, f), path.join(www, 'build-ipad', f));
   fs.writeFileSync(path.join(www, 'game-ipad.html'), page('64').replaceAll("'/build/fnv_web.js'", "'/build-ipad/fnv_web.js'")
-    .replace('window.fonvEnv = {', "window.fonvQuality = 'low'; window.fonvEnv = {")
-    .replace('</head>', '<style>#qHigh { display: none !important; }</style></head>'));
+    .replace('window.fonvEnv = {', `window.fonvQuality = 'low'; window.fonvLite = ${JSON.stringify(LITE_INI)}; window.fonvEnv = {`));
 }
 
 // 2) unsere App (überschreibt nichts vom Spiel außer index.html)
