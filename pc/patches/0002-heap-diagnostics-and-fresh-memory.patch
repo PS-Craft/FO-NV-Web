@@ -1,0 +1,99 @@
+diff --git a/port/recomp/host_web.cpp b/port/recomp/host_web.cpp
+index 8143522..a27c3b9 100644
+--- a/port/recomp/host_web.cpp
++++ b/port/recomp/host_web.cpp
+@@ -12,6 +12,7 @@
+ #include <pthread.h>
+ #include <stdarg.h>
+ #include <stdio.h>
++#include <malloc.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+@@ -77,12 +78,53 @@ struct HostThread
+ thread_local HostThread* t_ht;
+ HostThread* g_main_ht;                          // the game's main thread, for fnv_dump_state after a wasm trap
+ 
++// Large blocks (the game's VirtualAlloc reservations: 200, 64, 16 MB at start-up) come straight from the end of the
++// heap: malloc here never gives memory back below its break (dlmalloc MORECORE_CANNOT_TRIM), so the linear memory past
++// it has never been written and is zero. Zeroing it again, as before, made every page of those reservations resident at
++// once, used or not, which counts against the tab's memory on an iPad. A released large block is kept for a later
++// request of the same size and zeroed then.
++std::mutex g_big_mx;
++std::map<uint32_t, uint32_t> g_big;                    // large blocks from the break: address -> size
++std::multimap<uint32_t, uint32_t> g_big_free;          // released ones: size -> address
++const uint32_t kBigBlock = 8u << 20;
+ uint32_t galloc(uint32_t size)
+ {
+-    void* p = aligned_alloc(65536, (size + 65535) & ~65535u);
++    uint32_t rs = (size + 65535) & ~65535u;
++    if (rs >= kBigBlock)
++    {
++        std::lock_guard<std::mutex> lk(g_big_mx);
++        auto it = g_big_free.find(rs);
++        if (it != g_big_free.end())
++        {
++            uint32_t a = it->second;
++            g_big_free.erase(it);
++            memset((void*)(uintptr_t)a, 0, rs);
++            return a;
++        }
++        uintptr_t brk = (uintptr_t)sbrk(0);
++        uintptr_t pad = (65536 - (brk & 65535)) & 65535;
++        void* p = sbrk((intptr_t)(pad + rs));
++        if (p != (void*)-1)
++        {
++            uint32_t a = (uint32_t)((uintptr_t)p + pad);
++            g_big[a] = rs;
++            return a;
++        }
++    }
++    void* p = aligned_alloc(65536, rs);
+     memset(p, 0, size);
+     return (uint32_t)(uintptr_t)p;
+ }
++// free a galloc block (VirtualFree MEM_RELEASE)
++void gfree(uint32_t a)
++{
++    {
++        std::lock_guard<std::mutex> lk(g_big_mx);
++        auto it = g_big.find(a);
++        if (it != g_big.end()) { g_big_free.insert({it->second, a}); return; }
++    }
++    free((void*)(uintptr_t)a);
++}
+ 
+ HostThread* g_all_threads[64];                   // for fnv_dump_threads
+ 
+@@ -251,7 +293,7 @@ void w_VirtualFree(FnvCpu& s)
+     if ((harg(s, 2) & 0x8000) && g_vm.count(addr))   // MEM_RELEASE of a whole block
+     {
+         g_vm.erase(addr);
+-        if (addr < g_fixed_lo || addr >= g_fixed_hi) free((void*)(uintptr_t)addr);
++        if (addr < g_fixed_lo || addr >= g_fixed_hi) gfree(addr);
+     }
+     hret(s, 1, 3);
+ }
+@@ -601,6 +643,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE void fnv_dump_threads()
+ // while the game runs: the stack may change under the walk, which only costs a wrong sample now and then.
+ extern "C" uint64_t* fnv_present_stats();
+ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t fnv_perf() { return (uint32_t)(uintptr_t)fnv_present_stats(); }
++// heap in use (malloc's own count, KB) for the page's diagnostics: with sbrk (the heap's top) it tells a leak (both
++// grow) from fragmentation (only the top grows)
++extern "C" EMSCRIPTEN_KEEPALIVE uint32_t fnv_heap_used() { return (uint32_t)(mallinfo().uordblks >> 10); }
+ 
+ extern "C" EMSCRIPTEN_KEEPALIVE int fnv_sample(uint32_t* out, int max)
+ {
+diff --git a/tools/recomp_build_web.py b/tools/recomp_build_web.py
+index 31c6c55..1e860a3 100644
+--- a/tools/recomp_build_web.py
++++ b/tools/recomp_build_web.py
+@@ -40,7 +40,7 @@ if LTO:
+ TARGETS = {
+     'node': ('web', 'pal_fs_web.cpp', ['-sNODERAWFS=1', '-sENVIRONMENT=node,worker']),
+     'browser': ('web_browser', 'pal_fs_std.cpp', ['-sENVIRONMENT=web,worker', '-sPROXY_TO_PTHREAD=1',
+-                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot',
++                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_sbrk,_fnv_heap_used,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot',
+                 '-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32,HEAPF32,ccall']),
+ }
+ 

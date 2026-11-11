@@ -1,0 +1,38 @@
+diff --git a/port/recomp/pal_d3d9.cpp b/port/recomp/pal_d3d9.cpp
+index e9bad8b..b9246c9 100644
+--- a/port/recomp/pal_d3d9.cpp
++++ b/port/recomp/pal_d3d9.cpp
+@@ -1,5 +1,8 @@
+ // PAL Direct3D 9 (pal_d3d9.h): the device, its resources and the command ring.
+ #include "pal_d3d9.h"
++#ifdef __EMSCRIPTEN__
++#include <emscripten/threading.h>
++#endif
+ 
+ #include <math.h>
+ #include <stdio.h>
+@@ -67,6 +70,12 @@ void emit(uint32_t op, std::initializer_list<uint32_t> words, const void* data =
+     for (uint32_t v : words) { M32(q) = v; q += 4; }
+     if (len) memcpy((void*)(uintptr_t)q, data, len);
+     __atomic_store_n(&g_ring.write, w + total, __ATOMIC_RELEASE);
++#ifdef __EMSCRIPTEN__
++    // the page waits for packets instead of polling for them (a busy main thread takes CPU time from the game's
++    // threads, which matters on a four-core tablet): wake it once, and only when it said it is waiting
++    if (__atomic_exchange_n(&g_ring.waiting, 0u, __ATOMIC_ACQ_REL))
++        emscripten_futex_wake((void*)&g_ring.write, 0x7fffffff);
++#endif
+ }
+ 
+ uint32_t fbits(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
+diff --git a/port/recomp/pal_d3d9.h b/port/recomp/pal_d3d9.h
+index ec5c35c..5747b6d 100644
+--- a/port/recomp/pal_d3d9.h
++++ b/port/recomp/pal_d3d9.h
+@@ -50,6 +50,7 @@ struct D3dRing
+     volatile uint32_t write, read;     // byte offsets; the renderer advances read
+     volatile uint32_t frames_sent, frames_done;
+     uint32_t enabled;                  // set by the host when a renderer consumes the ring
++    volatile uint32_t waiting;         // the page sleeps on `write` (Atomics.waitAsync): wake it after the next packet
+ };
+ D3dRing* pal_d3d_ring();
+ void pal_d3d_enable_ring(uint32_t bytes);

@@ -79,6 +79,21 @@ for (const f of ['about.html', 'contact.html', 'how-to-play.html', 'privacy.html
   for (const ext of ['', '.br', '.gz']) fs.rmSync(path.join(www, f + ext), { force: true });
 patch('const env = {};', 'const env = Object.assign({}, window.fonvEnv);', 'env');
 patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät geladen' : 'downloaded'}` + (boot.file", 'Ladeanzeige');
+// Grafikbefehle abwarten statt abfragen: die Seite fragte bis zu 12 ms je Bild in einer Schleife (MessageChannel)
+// nach neuen Befehlen – gemessen ~12 % eines Kerns, die auf einem Tablet mit vier Kernen dem Spiel fehlen. Jetzt
+// schläft sie mit Atomics.waitAsync auf dem Schreibzeiger, und die Engine weckt sie (pc/patches/0005: Feld 7 des
+// Rings = "Seite wartet"). Ohne waitAsync (alte Browser) bleibt es beim Abfragen.
+patch(`if (data && performance.now() < deadline - 2) { await yieldSoon(); continue; }`,
+  `if (data && performance.now() < deadline - 2) {
+          if (Atomics.waitAsync) {
+            Atomics.store(H32, b + 7, 1);
+            const I32 = window.fonvI32 && window.fonvI32.buffer === H32.buffer ? window.fonvI32 : (window.fonvI32 = new Int32Array(H32.buffer));
+            const wa = Atomics.waitAsync(I32, b + 2, wr | 0, Math.max(1, deadline - 2 - performance.now()));
+            if (wa.async) await wa.value;
+            Atomics.store(H32, b + 7, 0);
+          } else await yieldSoon();
+          continue;
+        }`, 'Pump-Schleife');
 // Musik-Spieler ersetzen (tools/music.js): der alte behielt jedes entpackte Stück für immer im Speicher
 {
   const from = 'const tracks = new Map();\naudio.tracks = tracks;\nconst decoded = new Map();';
