@@ -1,0 +1,60 @@
+diff --git a/port/recomp/pal_kernel.cpp b/port/recomp/pal_kernel.cpp
+index b1dc4a7..1e822c6 100644
+--- a/port/recomp/pal_kernel.cpp
++++ b/port/recomp/pal_kernel.cpp
+@@ -401,14 +401,49 @@ void k_IsDebuggerPresent(FnvCpu& s) { RET(0, 0); }
+ 
+ // ---- interlocked --------------------------------------------------------------------------------------------------
+ uint32_t* gp(uint32_t a) { return (uint32_t*)(uintptr_t)a; }
+-void k_InterlockedIncrement(FnvCpu& s) { RET(__atomic_add_fetch(gp(A(0)), 1u, __ATOMIC_SEQ_CST), 1); }
+-void k_InterlockedDecrement(FnvCpu& s) { RET(__atomic_sub_fetch(gp(A(0)), 1u, __ATOMIC_SEQ_CST), 1); }
+-void k_InterlockedExchange(FnvCpu& s) { RET(__atomic_exchange_n(gp(A(0)), A(1), __ATOMIC_SEQ_CST), 2); }
+-void k_InterlockedExchangeAdd(FnvCpu& s) { RET(__atomic_fetch_add(gp(A(0)), A(1), __ATOMIC_SEQ_CST), 2); }
++// x86 lets the Interlocked functions work on any address, and the game does call them on counters that are not on a
++// 4-byte boundary. A WebAssembly atomic instruction traps there ("RuntimeError: Unaligned memory access" in Safari,
++// seen in a worker during a cell load on an iPad), which ends the game. Such an address takes a lock instead: exclusive
++// among the Interlocked calls, which is all that x86 promised for it too.
++std::mutex g_il_unaligned;
++template <class F> uint32_t il_unaligned(uint32_t a, F f)
++{
++    std::lock_guard<std::mutex> lk(g_il_unaligned);
++    uint32_t v;
++    memcpy(&v, (void*)(uintptr_t)a, 4);
++    uint32_t r = f(v);
++    memcpy((void*)(uintptr_t)a, &v, 4);
++    return r;
++}
++void k_InterlockedIncrement(FnvCpu& s)
++{
++    uint32_t a = A(0);
++    RET(a & 3 ? il_unaligned(a, [](uint32_t& v) { return ++v; }) : __atomic_add_fetch(gp(a), 1u, __ATOMIC_SEQ_CST), 1);
++}
++void k_InterlockedDecrement(FnvCpu& s)
++{
++    uint32_t a = A(0);
++    RET(a & 3 ? il_unaligned(a, [](uint32_t& v) { return --v; }) : __atomic_sub_fetch(gp(a), 1u, __ATOMIC_SEQ_CST), 1);
++}
++void k_InterlockedExchange(FnvCpu& s)
++{
++    uint32_t a = A(0), n = A(1);
++    RET(a & 3 ? il_unaligned(a, [n](uint32_t& v) { uint32_t old = v; v = n; return old; })
++              : __atomic_exchange_n(gp(a), n, __ATOMIC_SEQ_CST), 2);
++}
++void k_InterlockedExchangeAdd(FnvCpu& s)
++{
++    uint32_t a = A(0), n = A(1);
++    RET(a & 3 ? il_unaligned(a, [n](uint32_t& v) { uint32_t old = v; v += n; return old; })
++              : __atomic_fetch_add(gp(a), n, __ATOMIC_SEQ_CST), 2);
++}
+ void k_InterlockedCompareExchange(FnvCpu& s)
+ {
+-    uint32_t expected = A(2);
+-    __atomic_compare_exchange_n(gp(A(0)), &expected, A(1), false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
++    uint32_t a = A(0), n = A(1), expected = A(2);
++    if (a & 3)
++        expected = il_unaligned(a, [n, expected](uint32_t& v) { uint32_t old = v; if (old == expected) v = n; return old; });
++    else
++        __atomic_compare_exchange_n(gp(a), &expected, n, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+     RET(expected, 3);                                 // the initial value, whether or not it was replaced
+ }
+ 

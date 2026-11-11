@@ -7,8 +7,11 @@
 #
 # iPad-Variante (game-ipad.html + build-ipad/): weniger vorab gestartete Threads und weniger fester Speicher, damit
 # Safari den Tab nicht schließt. Einstellbar: $env:FNV_IPAD_POOL (Standard 24; das Spiel nutzt ~17 Threads),
-# $env:FNV_IPAD_MEMORY in MiB (Standard 2560, erlaubt 2048–3072; mit 2048 bricht das Spiel beim Laden mit "OOM" ab,
-# 2560 reicht zusammen mit dem kleinen Block-Cache, den tools/assemble.mjs für game-ipad.html einstellt).
+# $env:FNV_IPAD_MEMORY in MiB (Standard 3072, erlaubt 2048–3072). Gemessen: 2048 -> "OOM" schon beim Laden; 2560 ->
+# "OOM" nach gut zwei Minuten im Kampf (Protokoll vom iPad). Die Größe ist nur die Obergrenze; belegt wird, was das
+# Spiel wirklich benutzt, und Safari am iPad gibt 3072 her.
+#
+# Eigene Korrekturen an der Engine liegen als pc\patches\*.patch bei und werden vor dem Bau eingespielt.
 #
 # Ergebnis:  C:\FNV-Web\upload\  (www, fnv-mobile, fnv-private) -> mit .\deploy.ps1 hochladen
 
@@ -34,7 +37,17 @@ function Run($what, [string[]]$cmd) {
 if (-not $AppOnly) {
   Push-Location $Recomp
   try {
-      Run 'Programm in C++ übersetzen (recomp.py)'       @($Py, '-B', 'tools/recomp.py', '--exe', $Exe, '--shards', '64')
+      # eigene Korrekturen an der Engine einspielen (schon eingespielte erkennt die Gegenprobe)
+      foreach ($p in Get-ChildItem (Join-Path $Here 'patches') -Filter *.patch -ErrorAction SilentlyContinue | Sort-Object Name) {
+          # über cmd, damit die Meldungen von git (stderr) unter Windows PowerShell 5.1 keinen Abbruch auslösen
+          cmd /c "git apply --check `"$($p.FullName)`" >nul 2>&1"
+          if ($LASTEXITCODE -eq 0) { cmd /c "git apply `"$($p.FullName)`""; Write-Host "Patch eingespielt: $($p.Name)" }
+          else {
+              cmd /c "git apply --reverse --check `"$($p.FullName)`" >nul 2>&1"
+              if ($LASTEXITCODE -ne 0) { throw "Patch passt nicht mehr zur Engine: $($p.Name)" }
+          }
+      }
+      Run 'Programm in C++ übersetzen (recomp.py)'      @($Py, '-B', 'tools/recomp.py', '--exe', $Exe, '--shards', '64')
       Run 'Import-Tabelle'                               @($Py, '-B', 'tools/gen_import_table.py', '--exe', $Exe)
       Run 'COM-Tabellen'                                 @($Py, '-B', 'tools/gen_com_tables.py')
       if (-not (Test-Path 'out/recomp/d3d9_caps.inc')) {
@@ -53,7 +66,7 @@ if (-not $AppOnly) {
       }
       Run 'WebAssembly bauen (Emscripten, -O2)'          @($Py, '-B', 'tools/recomp_build_web.py', '--target', 'browser')
       $pool = if ($env:FNV_IPAD_POOL) { $env:FNV_IPAD_POOL } else { '24' }
-      $mem  = if ($env:FNV_IPAD_MEMORY) { $env:FNV_IPAD_MEMORY } else { '2560' }
+      $mem  = if ($env:FNV_IPAD_MEMORY) { $env:FNV_IPAD_MEMORY } else { '3072' }
       Run "WebAssembly iPad-Variante ($pool Threads, $mem MiB)" @($Py, '-B', 'tools/recomp_build_web.py', '--target', 'browser',
           '--pthread-pool-size', $pool, '--memory-mib', $mem, '--browser-out', 'out/recomp/web_browser_ipad')
       Run 'iPad-Archive (kleinere Texturen/Sounds)'      @($Py, '-B', 'tools/mobile_archives.py', '--game', $env:FNV_GAME)
