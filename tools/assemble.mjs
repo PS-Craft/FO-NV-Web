@@ -79,6 +79,14 @@ for (const f of ['about.html', 'contact.html', 'how-to-play.html', 'privacy.html
   for (const ext of ['', '.br', '.gz']) fs.rmSync(path.join(www, f + ext), { force: true });
 patch('const env = {};', 'const env = Object.assign({}, window.fonvEnv);', 'env');
 patch("MB downloaded` + (boot.file", "MB ${window.fonvLocal ? 'vom Gerät geladen' : 'downloaded'}` + (boot.file", 'Ladeanzeige');
+// Musik-Spieler ersetzen (tools/music.js): der alte behielt jedes entpackte Stück für immer im Speicher
+{
+  const from = 'const tracks = new Map();\naudio.tracks = tracks;\nconst decoded = new Map();';
+  const to = "  else if (cmd === 5 && t.playing) start(pos);\n};\n";
+  const a = game.indexOf(from), b = game.indexOf(to, a);
+  if (a < 0 || b < 0) fail('game.html: Musik-Spieler nicht gefunden – Spielseite hat sich geändert, tools/music.js anpassen');
+  game = game.slice(0, a) + fs.readFileSync(path.join(REPO, 'tools', 'music.js'), 'utf8') + game.slice(b + to.length);
+}
 // Geräte-Check der Spielseite: mit Daten vom Gerät weder die Leitung messen noch vor langsamer Verbindung warnen
 {
   const f = path.join(www, 'precheck.js');

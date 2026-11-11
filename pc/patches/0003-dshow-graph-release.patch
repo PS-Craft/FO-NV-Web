@@ -1,0 +1,126 @@
+diff --git a/port/recomp/pal_dshow.cpp b/port/recomp/pal_dshow.cpp
+index f05f138..bf7e582 100644
+--- a/port/recomp/pal_dshow.cpp
++++ b/port/recomp/pal_dshow.cpp
+@@ -2,6 +2,7 @@
+ // 0x830b30). The graph accepts the filter, runs on a clock and reports position, duration and completion, so the music
+ // logic advances tracks as on Windows; nothing is decoded or played yet. CoCreateInstance(CLSID_FilterGraph) creates it.
+ #include "pal_com.h"
++#include "fnv_recomp_host.h"
+ 
+ #include <string.h>
+ 
+@@ -78,7 +79,23 @@ void ok9(FnvCpu& s) { ok(s, 9); }
+ void notimpl(FnvCpu& s, int n) { hret(s, 0x80004001u, n); }
+ 
+ // IFilterGraph / IGraphBuilder
+-void gb_AddFilter(FnvCpu& s) { Graph* g = G(s); g->filter = A(1); if (A(1)) ++M32(A(1) + 8); RET(0, 3); }
++// The filter is the game's own object (its music decoder, holding the track). Like DirectShow, the graph takes a
++// reference through the filter's own AddRef and gives it back through its Release when the game lets go of the
++// graph. Before, the graph incremented the word at +8 (our COM layout, not the game's), so the filter and its track
++// were never freed: about 4 MB per music start, measured on the death screen (it restarts the music every 6 s),
++// until the tab ran out of memory.
++uint32_t filter_call(FnvCpu& s, uint32_t f, int slot)          // IUnknown: 1 AddRef, 2 Release
++{
++    uint32_t args[1] = {f};
++    return fnv_guest_call(s, M32(M32(f) + 4u * slot), args, 1);
++}
++void gb_AddFilter(FnvCpu& s)
++{
++    Graph* g = G(s);
++    uint32_t f = A(1);
++    if (f && !g->filter) { g->filter = f; filter_call(s, f, 1); }
++    RET(0, 3);
++}
+ 
+ // IMediaControl
+ void mc_set(FnvCpu& s, int st)
+@@ -149,6 +166,35 @@ void me_GetEvent(FnvCpu& s)
+ }
+ void me_WaitForCompletion(FnvCpu& s) { M32(A(2)) = 0; RET(0x80040013u, 3); }
+ 
++// Release on any of the graph's six interfaces. When the game holds none of them any more and the track still runs,
++// the page's player stops and frees it (otherwise every finished graph left a playing <audio> behind) and the filter
++// gets its reference back. The graph's own few hundred bytes stay, as before: freeing them is not worth the risk of a
++// late call through a stale pointer.
++// The game holds obj[0] from CoCreateInstance and the others only through QueryInterface, so the others count as
++// free at a reference count of 1 (their own).
++void graph_release(FnvCpu& s)
++{
++    uint32_t obj = A(0);
++    Graph* g = G(s);
++    uint32_t r = M32(obj + 8) ? --M32(obj + 8) : 0;
++    bool held = M32(g->obj[0] + 8) != 0;
++    for (int i = 1; i < 6 && !held; ++i) held = M32(g->obj[i] + 8) > 1;
++    if (!held)
++    {
++        int state;
++        {
++            std::lock_guard<std::mutex> lk(g->mx);
++            state = g->state;
++            g->state = 0;
++        }
++        if (state != 0) sink((uintptr_t)g, 3, g->file, g->volume, 0);
++        uint32_t f = g->filter;
++        g->filter = 0;
++        if (f) filter_call(s, f, 2);
++    }
++    RET(r, 1);
++}
++
+ // IDispatch's four methods, shared by the dispatch-based interfaces
+ ComCustom disp(const char* n, uint32_t b) { return ComCustom{n, b, [](FnvCpu& s) { hret(s, 0x80004001u, 0); }}; }
+ 
+@@ -156,7 +202,7 @@ ComClass* graph_class(int i)
+ {
+     static ComClass* cls[6];
+     if (cls[i]) return cls[i];
+-    HostFn release = nullptr;
++    HostFn release = graph_release;
+     switch (i)
+     {
+     case 0:
+@@ -170,7 +216,7 @@ ComClass* graph_class(int i)
+         break;
+     case 1:
+         cls[1] = com_class_custom("IMediaControl", {
+-            {"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, nullptr},
++            {"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, release},
+             {"GetTypeInfoCount", 8, nullptr}, {"GetTypeInfo", 16, nullptr}, {"GetIDsOfNames", 24, nullptr}, {"Invoke", 36, nullptr},
+             {"Run", 4, mc_Run}, {"Pause", 4, mc_Pause}, {"Stop", 4, mc_Stop}, {"GetState", 12, mc_GetState},
+             {"RenderFile", 8, ok2}, {"AddSourceFilter", 12, ok3}, {"get_FilterCollection", 8, ok2},
+@@ -178,14 +224,14 @@ ComClass* graph_class(int i)
+         break;
+     case 2:
+         cls[2] = com_class_custom("IBasicAudio", {
+-            {"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, nullptr},
++            {"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, release},
+             {"GetTypeInfoCount", 8, nullptr}, {"GetTypeInfo", 16, nullptr}, {"GetIDsOfNames", 24, nullptr}, {"Invoke", 36, nullptr},
+             {"put_Volume", 8, ba_put_Volume}, {"get_Volume", 8, ba_get_Volume}, {"put_Balance", 8, ba_put_Balance},
+             {"get_Balance", 8, ba_get_Balance}});
+         break;
+     case 3:
+         cls[3] = com_class_custom("IMediaPosition", {
+-            {"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, nullptr},
++            {"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, release},
+             {"GetTypeInfoCount", 8, nullptr}, {"GetTypeInfo", 16, nullptr}, {"GetIDsOfNames", 24, nullptr}, {"Invoke", 36, nullptr},
+             {"get_Duration", 8, mp_get_Duration}, {"put_CurrentPosition", 12, mp_put_CurrentPosition},
+             {"get_CurrentPosition", 8, mp_get_CurrentPosition}, {"get_StopTime", 8, mp_get_Duration},
+@@ -195,7 +241,7 @@ ComClass* graph_class(int i)
+         break;
+     case 4:
+         cls[4] = com_class_custom("IMediaEventEx", {
+-            {"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, nullptr},
++            {"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, release},
+             {"GetTypeInfoCount", 8, nullptr}, {"GetTypeInfo", 16, nullptr}, {"GetIDsOfNames", 24, nullptr}, {"Invoke", 36, nullptr},
+             {"GetEventHandle", 8, me_GetEventHandle}, {"GetEvent", 20, me_GetEvent},
+             {"WaitForCompletion", 12, me_WaitForCompletion}, {"CancelDefaultHandling", 8, ok2},
+@@ -203,7 +249,7 @@ ComClass* graph_class(int i)
+             {"SetNotifyFlags", 8, ok2}, {"GetNotifyFlags", 8, [](FnvCpu& s) { M32(A(1)) = 0; hret(s, 0, 2); }}});
+         break;
+     default:
+-        cls[5] = com_class_custom("IMediaSeeking", {{"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, nullptr}});
++        cls[5] = com_class_custom("IMediaSeeking", {{"QueryInterface", 12, qi}, {"AddRef", 4, nullptr}, {"Release", 4, release}});
+         break;
+     }
+     (void)ok6; (void)ok9;

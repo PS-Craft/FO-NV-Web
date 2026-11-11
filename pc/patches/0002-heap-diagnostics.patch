@@ -1,0 +1,35 @@
+diff --git a/port/recomp/host_web.cpp b/port/recomp/host_web.cpp
+index 8143522..1f52748 100644
+--- a/port/recomp/host_web.cpp
++++ b/port/recomp/host_web.cpp
+@@ -12,6 +12,7 @@
+ #include <pthread.h>
+ #include <stdarg.h>
+ #include <stdio.h>
++#include <malloc.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+@@ -601,6 +602,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE void fnv_dump_threads()
+ // while the game runs: the stack may change under the walk, which only costs a wrong sample now and then.
+ extern "C" uint64_t* fnv_present_stats();
+ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t fnv_perf() { return (uint32_t)(uintptr_t)fnv_present_stats(); }
++// heap in use (malloc's own count, KB) for the page's diagnostics: with sbrk (the heap's top) it tells a leak (both
++// grow) from fragmentation (only the top grows)
++extern "C" EMSCRIPTEN_KEEPALIVE uint32_t fnv_heap_used() { return (uint32_t)(mallinfo().uordblks >> 10); }
+ 
+ extern "C" EMSCRIPTEN_KEEPALIVE int fnv_sample(uint32_t* out, int max)
+ {
+diff --git a/tools/recomp_build_web.py b/tools/recomp_build_web.py
+index 31c6c55..1e860a3 100644
+--- a/tools/recomp_build_web.py
++++ b/tools/recomp_build_web.py
+@@ -40,7 +40,7 @@ if LTO:
+ TARGETS = {
+     'node': ('web', 'pal_fs_web.cpp', ['-sNODERAWFS=1', '-sENVIRONMENT=node,worker']),
+     'browser': ('web_browser', 'pal_fs_std.cpp', ['-sENVIRONMENT=web,worker', '-sPROXY_TO_PTHREAD=1',
+-                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot',
++                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_sbrk,_fnv_heap_used,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot',
+                 '-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32,HEAPF32,ccall']),
+ }
+ 

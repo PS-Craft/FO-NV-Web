@@ -410,6 +410,9 @@
     if (diag.n === 0) e.dev = { ua: navigator.userAgent, page: location.pathname + location.search, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
       cores: navigator.hardwareConcurrency, mem: navigator.deviceMemory, touch: navigator.maxTouchPoints, quality: b.quality, env: window.fonvEnv,
       standalone: !!navigator.standalone, display: mode() };
+    // belegter Spiel-Speicher (Obergrenze des Heaps, sbrk) und offene Musikstücke: zeigt, ob über die Zeit etwas wächst
+    try { var Mo = window.Module; if (Mo && Mo._sbrk) e.heapMB = Math.round((Mo._sbrk(0) >>> 0) / 1048576); if (Mo && Mo._fnv_heap_used) e.usedMB = Math.round((Mo._fnv_heap_used() >>> 0) / 1024); } catch (er) { /* egal */ }
+    try { if (window.fnvAudio && window.fnvAudio.tracks) e.music = window.fnvAudio.tracks.size; } catch (er) { /* egal */ }
     e.res = (function () { var c = document.getElementById('screen'); return c ? c.width + 'x' + c.height : ''; })();
     var sig = [e.text, e.stage, e.mb, e.fail, e.hidden, e.status.replace(/\d+ fps/, 'fps')].join('|');
     if (!force && sig === diag.sig && !e.errs.length && !e.log.length && diag.n % 6 !== 0) { diag.n++; return; }
