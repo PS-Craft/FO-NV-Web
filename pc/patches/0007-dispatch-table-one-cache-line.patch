@@ -1,0 +1,73 @@
+diff --git a/port/recomp/fnv_recomp_rt.cpp b/port/recomp/fnv_recomp_rt.cpp
+index 835349b..b076fd7 100644
+--- a/port/recomp/fnv_recomp_rt.cpp
++++ b/port/recomp/fnv_recomp_rt.cpp
+@@ -10,9 +10,11 @@
+ #include <atomic>
+ 
+ namespace {
+-// open-addressing table, power-of-two size, key 0 = empty (no function lives at address 0)
+-uint32_t* g_keys;
+-FnvFn* g_vals;
++// open-addressing table, power-of-two size, key 0 = empty (no function lives at address 0). Key and function side by
++// side: every indirect call looks up here (a quarter of the main thread's time while a world loads), and with two
++// separate arrays each lookup touched two cache lines in a table of several MB.
++struct Slot { uint32_t key; FnvFn fn; };
++Slot* g_tab;
+ uint32_t g_mask, g_count;
+ HostFn g_host[kHostFnMax];
+ const char* g_host_names[kHostFnMax];
+@@ -25,20 +27,16 @@ inline uint32_t hash(uint32_t a) { a ^= a >> 15; a *= 0x2c1b3c6du; a ^= a >> 12;
+ void grow()
+ {
+     uint32_t n = g_mask ? (g_mask + 1) * 2 : 1u << 18;
+-    uint32_t* keys = (uint32_t*)calloc(n, 4);
+-    FnvFn* vals = (FnvFn*)calloc(n, sizeof(FnvFn));
++    Slot* tab = (Slot*)calloc(n, sizeof(Slot));
+     for (uint32_t i = 0; g_mask && i <= g_mask; ++i)
+-        if (g_keys[i])
++        if (g_tab[i].key)
+         {
+-            uint32_t j = hash(g_keys[i]) & (n - 1);
+-            while (keys[j]) j = (j + 1) & (n - 1);
+-            keys[j] = g_keys[i];
+-            vals[j] = g_vals[i];
++            uint32_t j = hash(g_tab[i].key) & (n - 1);
++            while (tab[j].key) j = (j + 1) & (n - 1);
++            tab[j] = g_tab[i];
+         }
+-    free(g_keys);
+-    free(g_vals);
+-    g_keys = keys;
+-    g_vals = vals;
++    free(g_tab);
++    g_tab = tab;
+     g_mask = n - 1;
+ }
+ } // namespace
+@@ -50,10 +48,9 @@ extern "C" void fnv_register_functions(const uint32_t* addrs, const FnvFn* fns,
+         if ((g_count + 1) * 2 > g_mask)
+             grow();
+         uint32_t j = hash(addrs[i]) & g_mask;
+-        while (g_keys[j] && g_keys[j] != addrs[i]) j = (j + 1) & g_mask;
+-        if (!g_keys[j]) ++g_count;
+-        g_keys[j] = addrs[i];
+-        g_vals[j] = fns[i];
++        while (g_tab[j].key && g_tab[j].key != addrs[i]) j = (j + 1) & g_mask;
++        if (!g_tab[j].key) ++g_count;
++        g_tab[j] = {addrs[i], fns[i]};
+     }
+ }
+ 
+@@ -61,9 +58,9 @@ FnvFn fnv_lookup(uint32_t addr)
+ {
+     if (!g_mask) return nullptr;
+     uint32_t j = hash(addr) & g_mask;
+-    while (g_keys[j])
++    while (uint32_t k = g_tab[j].key)
+     {
+-        if (g_keys[j] == addr) return g_vals[j];
++        if (k == addr) return g_tab[j].fn;
+         j = (j + 1) & g_mask;
+     }
+     return nullptr;
