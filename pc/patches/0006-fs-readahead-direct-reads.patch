@@ -1,0 +1,212 @@
+diff --git a/port/recomp/pal_fs_web.cpp b/port/recomp/pal_fs_web.cpp
+index 7c7c0dd..a722df6 100644
+--- a/port/recomp/pal_fs_web.cpp
++++ b/port/recomp/pal_fs_web.cpp
+@@ -16,6 +16,7 @@
+ #include "fnv_recomp_host.h"
+ #include <stdlib.h>
+ #include <string.h>
++#include <strings.h>
+ 
+ #include <time.h>
+ 
+@@ -26,6 +27,7 @@
+ #include <memory>
+ #include <mutex>
+ #include <string>
++#include <thread>
+ #include <unordered_map>
+ #include <vector>
+ 
+@@ -33,7 +35,9 @@
+ // thread that asked. Each try has a timeout; a network error, a timeout or a server error (5xx, 408, 429) waits a
+ // little longer each time and tries again, and counts in g_pal_boot.retries (the loading bar shows it). Defined once
+ // per worker (fs_init below).
+-EM_JS(void, js_fs_init, (int mobile, uint32_t* retries), {
++EM_JS(void, js_fs_init, (int mobile, uint32_t* retries, int32_t* fsq), {
++    // direct reads from the device (FO-NV-Web public/fs-worker.js): the request queue in shared memory (g_fsq below)
++    globalThis.fnvFsq = (fsq >>> 0) >>> 2;
+     // the phone version (FNV_ARCHIVES=mobile, web/recomp/index.html): /game/data/<name>.bsa is read from
+     // /game/data/mobile/<name>.bsa when the index has one (tools/mobile_archives.py: smaller textures and sounds)
+     globalThis.fnvMobile = !!mobile;
+@@ -116,6 +120,41 @@ EM_JS(int, js_fs_fetch, (const char* path, double off, int len, uint8_t* dst), {
+     var hit = fnvGameLookup(p);
+     var ver = hit && hit.file ? '&v=' + hit.file[1] : '';
+     if (hit && hit.path) p = hit.path;
++    // game data on the device: ask the fs worker (it reads straight into dst); -1 or no worker -> the server path below
++    var q = globalThis.fnvFsq;
++    if (q && Atomics.load(HEAP32, q) > 0 && lengthBytesUTF8(p) < 256) {
++        for (var i = 0; i < 16; i++) {
++            var s = q + 4 + i * 72;
++            if (Atomics.compareExchange(HEAP32, s, 0, 1) != 0) continue;
++            HEAP32[s + 1] = stringToUTF8(p, (s + 8) * 4, 256);     // 64 int32 of the slot
++            HEAP32[s + 2] = (off % 4294967296) | 0;
++            HEAP32[s + 3] = Math.floor(off / 4294967296);
++            HEAP32[s + 4] = len;
++            HEAP32[s + 5] = dst;
++            HEAP32[s + 6] = -1;
++            Atomics.store(HEAP32, s, 2);
++            Atomics.add(HEAP32, q + 1, 1);
++            Atomics.notify(HEAP32, q + 1);
++            // states: 2 asked, 4 a worker reads, 5 it writes into dst, 3 done. 30 waits of 1 s without any change (not
++            // wall-clock time: an app switch on the iPad stops all threads) = the workers are stuck: take the request
++            // back (2 -> 0) or cancel it (4 -> 6, the worker then never writes into dst), and use the server from now on.
++            // Once it writes (5), dst is only a copy away: wait for 3.
++            var v, idle = 0;
++            while ((v = Atomics.load(HEAP32, s)) != 3) {
++                if (Atomics.wait(HEAP32, s, v, 1000) != 'timed-out') { idle = 0; continue; }
++                if (++idle < 30 || v == 5) continue;
++                if (Atomics.compareExchange(HEAP32, s, 2, 0) == 2 || Atomics.compareExchange(HEAP32, s, 4, 6) == 4) {
++                    Atomics.store(HEAP32, q, 0);
++                    break;
++                }
++            }
++            if (v != 3) break;
++            var got = HEAP32[s + 6];
++            Atomics.store(HEAP32, s, 0);
++            if (got >= 0) return got;
++            break;
++        }
++    }
+     var x = fnvXhr('GET', '/fs/read?p=' + encodeURIComponent(p) + '&o=' + off + '&n=' + len + ver, null, true);
+     if (x.status != 200) return -1;
+     var data = new Uint8Array(x.response);
+@@ -159,7 +198,7 @@ EM_JS(int, js_fs_op, (const char* op, const char* a, const char* b), {
+ // a /docs file or folder kept in this browser tab (below)
+ struct LocalNode { bool dir = false, gone = false; std::vector<uint8_t> data; uint32_t mtime = 0; std::string path; };
+ 
+-struct PalFile { std::string path; int64_t pos, size; bool writable; std::shared_ptr<LocalNode> local; };
++struct PalFile { std::string path; int64_t pos, size; bool writable; std::shared_ptr<LocalNode> local; int64_t last_blk = -1; };
+ 
+ namespace {
+ std::mutex g_cwd_mx;
+@@ -174,9 +213,23 @@ bool fs_mobile()
+     static const bool m = [] { const char* a = getenv("FNV_ARCHIVES"); return a && !strcmp(a, "mobile"); }();
+     return m;
+ }
++// the queue for public/fs-worker.js of FO-NV-Web: [0] workers ready, [1] doorbell, then 16 slots of 72 int32
++alignas(16) int32_t g_fsq[4 + 16 * 72];
+ void fs_init()
+ {
+-    if (!t_init) { js_fs_init(fs_mobile(), (uint32_t*)&g_pal_boot.retries); t_init = true; }
++    if (t_init) return;
++    js_fs_init(fs_mobile(), (uint32_t*)&g_pal_boot.retries, g_fsq);
++    t_init = true;
++    // once: the page starts the fs workers when the game data is on the device (it sets fonvFsWorker); they get the
++    // shared memory and mark [0] when ready. Until then, and without them, every read goes to the server path.
++    static std::atomic<bool> started{false};
++    if (!started.exchange(true))
++        MAIN_THREAD_ASYNC_EM_ASM({
++            if (!globalThis.fonvFsWorker) return;
++            for (var i = 0; i < 2; i++) {
++                try { new Worker(globalThis.fonvFsWorker).postMessage({ buf: HEAPU8.buffer, q: $0 }); } catch (e) {}
++            }
++        }, g_fsq);
+ }
+ 
+ std::string norm(const char* p)
+@@ -212,6 +265,16 @@ std::string norm(const char* p)
+ namespace {
+ // 1 MB, or 256 KB in the phone version
+ int64_t block_size() { static const int64_t b = fs_mobile() ? 256 << 10 : 1 << 20; return b; }
++// Files the game reads from start to end (the plugins: FalloutNV.esm alone is ~100 MB at start-up, the exe): bigger
++// blocks, and the next ones fetched ahead by a helper thread (fs_ahead below) while the game parses this one. Before,
++// each 256 KB of FalloutNV.esm was one synchronous request after the other, and the main thread waited on them.
++bool seq_file(const std::string& p)
++{
++    const size_t n = p.size();
++    auto ends = [&](const char* e) { const size_t k = strlen(e); return n >= k && strcasecmp(p.c_str() + n - k, e) == 0; };
++    return ends(".esm") || ends(".esp") || ends(".exe");
++}
++int64_t file_block(const std::string& p) { return seq_file(p) ? (fs_mobile() ? 1 << 20 : 4 << 20) : block_size(); }
+ size_t cache_max()
+ {
+     static const size_t bytes = [] {
+@@ -299,7 +362,8 @@ std::shared_ptr<Block> bc_get(const std::string& path, int64_t blk, int64_t size
+     auto b = std::make_shared<Block>();
+     g_blocks[key] = b;
+     lk.unlock();
+-    int64_t want = std::min(block_size(), size - blk * block_size());
++    const int64_t bs = file_block(path);
++    int64_t want = std::min(bs, size - blk * bs);
+     b->data.resize((size_t)want);
+     {
+         // start-up progress: name the file before the fetch, so a slow one shows what is loading
+@@ -307,7 +371,7 @@ std::shared_ptr<Block> bc_get(const std::string& path, int64_t blk, int64_t size
+         memcpy(g_pal_boot.file, path.data(), n);
+         g_pal_boot.file[n] = 0;
+     }
+-    int got = js_fs_fetch(path.c_str(), (double)(blk * block_size()), (int)want, b->data.data());
++    int got = js_fs_fetch(path.c_str(), (double)(blk * bs), (int)want, b->data.data());
+     lk.lock();
+     auto it = g_blocks.find(key);
+     bool listed = it != g_blocks.end() && it->second == b;
+@@ -331,6 +395,48 @@ std::shared_ptr<Block> bc_get(const std::string& path, int64_t blk, int64_t size
+     if (main) main_wait_note(t0, path, blk, "its own fetch");
+     return b->failed ? nullptr : b;
+ }
++
++// read-ahead for seq_file(): one helper thread fetches the blocks after the one just read into the shared cache
++struct Ahead { std::string path; int64_t blk, size; };
++std::mutex g_ah_mx;
++std::condition_variable g_ah_cv;
++std::vector<Ahead> g_ah_q;
++bool g_ah_started;
++void fs_ahead(const std::string& path, int64_t blk, int64_t size)
++{
++    const int64_t bs = file_block(path);
++    for (int64_t k = blk + 1; k <= blk + 2 && k * bs < size; ++k)
++    {
++        {
++            std::lock_guard<std::mutex> lk(g_bc_mx);
++            if (g_blocks.count(path + '#' + std::to_string(k))) continue;      // cached or being fetched
++        }
++        std::lock_guard<std::mutex> lk(g_ah_mx);
++        bool queued = false;
++        for (auto& a : g_ah_q) queued |= a.blk == k && a.path == path;
++        if (queued || g_ah_q.size() >= 8) continue;
++        g_ah_q.push_back({path, k, size});
++        if (!g_ah_started)
++        {
++            g_ah_started = true;
++            std::thread([] {
++                fs_init();
++                for (;;)
++                {
++                    Ahead a;
++                    {
++                        std::unique_lock<std::mutex> lk(g_ah_mx);
++                        g_ah_cv.wait(lk, [] { return !g_ah_q.empty(); });
++                        a = g_ah_q.front();
++                        g_ah_q.erase(g_ah_q.begin());
++                    }
++                    bc_get(a.path, a.blk, a.size);
++                }
++            }).detach();
++        }
++        g_ah_cv.notify_one();
++    }
++}
+ } // namespace
+ 
+ 
+@@ -509,12 +615,17 @@ size_t pal_fs_read(void* buf, size_t n, PalFile* f)
+     if (f->pos >= f->size) return 0;
+     fs_init();
+     size_t done = 0;
++    const int64_t bs = file_block(f->path);
++    const bool seq = !f->writable && seq_file(f->path);
+     while (done < n && f->pos < f->size)
+     {
+-        int64_t blk = f->pos / block_size();
++        int64_t blk = f->pos / bs;
+         std::shared_ptr<Block> b = bc_get(f->path, blk, f->size);
+         if (!b) break;
+-        int64_t start = f->pos - blk * block_size();
++        // only while the reads run forward (start-up parse): the game also seeks around in the plugins later
++        if (seq && blk == f->last_blk + 1) fs_ahead(f->path, blk, f->size);
++        f->last_blk = blk;
++        int64_t start = f->pos - blk * bs;
+         int64_t k = std::min<int64_t>((int64_t)(n - done), (int64_t)b->data.size() - start);
+         if (k <= 0) break;
+         memcpy((uint8_t*)buf + done, b->data.data() + start, (size_t)k);

@@ -219,7 +219,7 @@ async function appRequest(req, url) {
   const key = new URL(url.pathname.endsWith('/') ? url.pathname + 'index.html' : url.pathname, url.origin).href;
   const lookup = () => cache.match(key);
   // Dateien mit Prüfsumme im Namen ändern sich nie: direkt vom Gerät
-  if (/\/(shader\/[0-9a-f]{40}|assets\/)/.test(url.pathname)) {
+  if (/\/(shader\/([0-9a-f]{40}|pack-[0-9a-f]{16}\.txt)|assets\/)/.test(url.pathname)) {
     const hit = await lookup();
     if (hit) return hit;
   }

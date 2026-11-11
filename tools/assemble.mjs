@@ -45,6 +45,22 @@ fs.mkdirSync(www, { recursive: true });
 // 1) Spiel-Build; seine Startseite wird zu game.html
 fs.cpSync(recomp, www, { recursive: true });
 for (const ext of ['', '.gz', '.br']) fs.rmSync(path.join(www, 'index.html' + ext), { force: true });
+// Shader als ein Paket: die Seite lud beim Start des Hauptmenüs ~1000 einzelne Dateien (je eine Anfrage, offline je
+// ein Cache-Zugriff im Service Worker), und jedes Bild mit einem neuen Shader wartete darauf. Jetzt eine Datei
+// (~3 MB komprimiert), schon beim Öffnen der Seite angefordert (Kopfskript unten). Die Einzeldateien bleiben als Rückfall.
+let shaderPack = '';
+{
+  const dir = path.join(www, 'shader');
+  const shas = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /^[0-9a-f]{40}$/.test(f)).sort() : [];
+  if (shas.length) {
+    const body = shas.map((f) => f + '\t' + JSON.stringify(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')))).join('\n');
+    shaderPack = `shader/pack-${crypto.createHash('sha1').update(body).digest('hex').slice(0, 16)}.txt`;
+    const f = path.join(www, shaderPack);
+    fs.writeFileSync(f, body);
+    fs.writeFileSync(f + '.br', zlib.brotliCompressSync(body, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } }));
+    fs.writeFileSync(f + '.gz', zlib.gzipSync(body, { level: 9 }));
+  }
+}
 let game = fs.readFileSync(path.join(recomp, 'index.html'), 'utf8');
 if (!game.includes('</body>')) fail('index.html des Spiels hat kein </body>');
 // Werbeskript der öffentlichen Seite: auf dem privaten Server nicht laden (Datenschutz; COEP blockt es ohnehin)
@@ -61,14 +77,33 @@ const patch = (from, to, what) => {
 patch('<script src="precheck.js"></script>', `<script>
 window.fonvLocal = (function () { try { return localStorage.getItem('fonv.offline') === '1' && !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch (e) { return false; } })();
 window.fonvEnv = { FNV_FS_CACHE_MB: window.fonvLocal ? '32' : '__STREAM_CACHE__' };
+// Daten vom Gerät: die Engine (pc/patches/0006) startet damit Worker, die Spieldateien direkt aus OPFS lesen
+if (window.fonvLocal) window.fonvFsWorker = '/fs-worker.js';
 // iPad-Variante (fonvLite, unten gesetzt): sparsame Spiel-Einstellungen über FNV_INI der Engine; abschaltbar mit
 // localStorage fonv.lite = 0. Die kleinere Auflösung nur, solange die automatische Qualität keine eigene gewählt hat.
 try {
   if (window.fonvLite && localStorage.getItem('fonv.lite') !== '0')
     window.fonvEnv.FNV_INI = window.fonvLite + (+(localStorage.getItem('fnv.tuner.res') || 0) ? '' : ';iSize W:Display=960;iSize H:Display=540');
 } catch (e) { /* privater Modus */ }
+// Shader-Paket (oben) sofort anfordern; der Renderer fragt jeden Shader hier nach (sonst einzeln vom Server)
+window.fonvShader = (function () {
+  var name = ${JSON.stringify(shaderPack)};
+  var one = function (sha) { return fetch('/shader/' + sha).then(function (r) { return r.ok ? r.json() : null; }); };
+  if (!name) return undefined;
+  // als Bytes behalten (~12 MB, offline gibt es die Einzeldateien nicht mehr), jeder Shader erst bei Bedarf entschlüsselt
+  var pack = fetch('/' + name).then(function (r) { return r.ok ? r.arrayBuffer() : null; }).then(function (buf) {
+    if (!buf) return null;
+    var b = new Uint8Array(buf), m = new Map(), dec = new TextDecoder(), i = 0;
+    while (i < b.length) { var e = b.indexOf(10, i); if (e < 0) e = b.length; m.set(dec.decode(b.subarray(i, i + 40)), [i + 41, e]); i = e + 1; }
+    return { b: b, m: m, dec: dec };
+  }).catch(function () { return null; });
+  return function (sha) {
+    return pack.then(function (p) { var s = p && p.m.get(sha); return s ? JSON.parse(p.dec.decode(p.b.subarray(s[0], s[1]))) : one(sha); });
+  };
+})();
 </script>
 <script src="precheck.js"></script>`, 'precheck.js');
+patch('const renderer = new Renderer(device, canvas, { log:', 'const renderer = new Renderer(device, canvas, { fetchShader: window.fonvShader, log:', 'Renderer');
 // iPad-Variante: immer die kleinen Archive. Die iPad-Grafik kann die komprimierten Texturen nicht direkt nutzen
 // (kein BC), sie werden entpackt und brauchen ein Vielfaches an Speicher – mit "High" schließt iPadOS den Tab.
 patch("const qualityParam = query.get('quality') ||", "const qualityParam = query.get('quality') || window.fonvQuality ||", 'Qualität');
@@ -213,6 +248,7 @@ const walk = (dir, rel) => {
     const r = rel ? rel + '/' + e.name : e.name;
     if (e.isDirectory()) { walk(path.join(dir, e.name), r); continue; }
     if (/\.(php|br|gz|map)$/.test(e.name) || e.name.startsWith('.')) continue;
+    if (shaderPack && /^shader\/[0-9a-f]{40}$/.test(r)) continue;     // stecken im Shader-Paket
     offline.push(r);
     hash.update(r + '\0').update(fs.readFileSync(path.join(dir, e.name)));
   }

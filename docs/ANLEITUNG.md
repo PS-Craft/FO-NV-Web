@@ -141,6 +141,10 @@ selbst zur Anmeldung weiter.
 - **Das Netz stört nicht mehr:** Spieldaten, App, Shader und Spielstände kommen vom Gerät; die Ladeanzeige sagt dann
   „vom Gerät geladen“. Fällt der Server aus oder wechselt das Netz, läuft das Spiel weiter (lokal geprüft: Start mit
   abgeschaltetem Server, 0 Anfragen für Spieldaten).
+- **Ladezeiten:** Mit Daten vom Gerät lesen eigene Worker (`public/fs-worker.js`) die Spieldateien direkt aus dem
+  Gerätespeicher in den Speicher des Spiels – ohne Umweg über HTTP und Service Worker (pc/patches/0006). Große
+  Spieldateien (FalloutNV.esm u. a.) werden in größeren Stücken gelesen und vorausgeladen, alle Shader kommen als ein
+  Paket (~0,5 MB). Gemessen am PC: Hauptmenü 22,5 → 15 s, Schnellstart in die Welt 53 → 31–38 s.
 - **Vom Gerät löschen** lädt vorher offene Spielstände hoch; auf dem Server ändert sich nichts.
 - Vorher prüft die App selbst, ob der Browser das kann. iPad: App über Teilen → **Zum Home-Bildschirm** öffnen,
   sonst darf Safari die Daten nach einiger Zeit löschen.

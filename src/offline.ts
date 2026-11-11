@@ -174,7 +174,7 @@ async function cacheApp(state: OfflineState, report: (p: Progress) => void): Pro
   const man = (await (await fetch('./offline.json', { cache: 'no-store', credentials: 'same-origin' })).json()) as { version: string; files: string[] };
   if (state.app === man.version) return;
   const cache = await caches.open('fonv-app');
-  const hashed = (f: string) => /^(shader\/[0-9a-f]{40}|assets\/)/.test(f);
+  const hashed = (f: string) => /^(shader\/([0-9a-f]{40}|pack-[0-9a-f]{16}\.txt)|assets\/)/.test(f);
   let next = 0, done = 0;
   const lane = async () => {
     while (next < man.files.length) {
@@ -190,6 +190,9 @@ async function cacheApp(state: OfflineState, report: (p: Progress) => void): Pro
     }
   };
   await Promise.all([lane(), lane(), lane(), lane(), lane(), lane()]);
+  // alte Shader (Einzeldateien von früher, ältere Pakete) aus dem Cache: sonst wächst er mit jedem Update um ~12 MB
+  const want = new Set(man.files.map((f) => new URL(f, location.href).href));
+  for (const k of await cache.keys()) if (new URL(k.url).pathname.includes('/shader/') && !want.has(k.url)) await cache.delete(k);
   state.app = man.version;
   await saveState(state);
 }
