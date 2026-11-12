@@ -193,6 +193,15 @@ const LITE_INI = [
   let t = fs.readFileSync(f, 'utf8');
   if (!t.includes(from)) fail(`tuner.js: "${from}" nicht gefunden – tools/assemble.mjs anpassen`);
   t = t.replace(from, "+query.get('target') || ((() => { try { return localStorage.getItem('fonv.fps') === '30'; } catch { return false; } })() ? 30 : 60)");
+  // iPad-Variante: nie wieder die volle Sichtweite. Protokoll vom iPad: 25 s nach dem Schritt auf "full view distance"
+  // scheiterte createPipelineLayout und die Grafik fiel aus; eine Stufe darunter lief es vorher 4 Minuten stabil.
+  for (const [a, b] of [
+    ['t.level = Math.max(0, Math.min(levels.length - 1, level));', 't.level = Math.max(window.fonvLite && levels.length > 1 ? 1 : 0, Math.min(levels.length - 1, level));'],
+    ['} else if (highRun >= 10 && t.level > 0 &&', '} else if (highRun >= 10 && t.level > (window.fonvLite && levels.length > 1 ? 1 : 0) &&'],
+  ]) {
+    if (!t.includes(a)) fail(`tuner.js: "${a}" nicht gefunden – tools/assemble.mjs anpassen`);
+    t = t.replace(a, b);
+  }
   fs.writeFileSync(f, t);
   for (const ext of ['.br', '.gz']) fs.rmSync(f + ext, { force: true });
 }

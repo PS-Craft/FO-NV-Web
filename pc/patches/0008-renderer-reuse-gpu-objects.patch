@@ -1,0 +1,91 @@
+diff --git a/web/recomp/renderer.js b/web/recomp/renderer.js
+index 2dbb1a9..90c8aca 100644
+--- a/web/recomp/renderer.js
++++ b/web/recomp/renderer.js
+@@ -277,6 +277,8 @@ export class Renderer {
+     this.modules = new Map();
+     this.pipelines = new Map();
+     this.layouts = new Map();
++    this.pipeLayouts = new Map();
++    this.bgByView = new Map(); this.bgMade = 0;            // texture view id -> bind group keys that use it (dropped with the texture)
+     this.samplers = new Map();
+     this.bindGroups = new Map();
+     this.vstates = new Map();            // vertex layouts by shader, declaration and stream strides
+@@ -341,6 +343,7 @@ export class Renderer {
+       @fragment fn fs(v : V) -> @location(0) vec4<f32> { return vec4<f32>(textureSample(t, s, v.uv).rgb, 1.0); }`;
+     const m = this.dev.createShaderModule({ code });
+     this.blitPipes = new Map();
++    this.blitGroups = new WeakMap();
+     this.blitModule = m;
+     this.blitSampler = this.dev.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+   }
+@@ -359,7 +362,13 @@ export class Renderer {
+     const pipe = this.blitPipe(format);
+     pass.setPipeline(pipe);
+     if (rect) pass.setViewport(rect[0], rect[1], rect[2], rect[3], 0, 1);
+-    pass.setBindGroup(0, this.dev.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: srcView }, { binding: 1, resource: this.blitSampler }] }));
++    // one bind group per source view and pipeline, made once (it was one per call: every frame at least once). In
++    // Safari each GPU object lives until the page's garbage collector runs; they piled up in the GPU process.
++    let bgs = this.blitGroups.get(srcView);
++    if (!bgs) this.blitGroups.set(srcView, (bgs = new Map()));
++    let bg = bgs.get(pipe);
++    if (!bg) bgs.set(pipe, (bg = this.dev.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: srcView }, { binding: 1, resource: this.blitSampler }] })));
++    pass.setBindGroup(0, bg);
+     pass.draw(3);
+     pass.end();
+   }
+@@ -455,7 +464,12 @@ export class Renderer {
+   }
+   destroy(id) {
+     const t = this.textures.get(id);
+-    if (t && id !== 1) { this.endPass(); this.pendingDestroy = (this.pendingDestroy || []).concat([t.gpu]); this.textures.delete(id); this.bindGroups.clear(); }
++    if (t && id !== 1) {
++      this.endPass(); this.pendingDestroy = (this.pendingDestroy || []).concat([t.gpu]); this.textures.delete(id);
++      const vid = t.sampleView && this.objIds.get(t.sampleView);
++      const keys = vid && this.bgByView.get(vid);
++      if (keys) { for (const k of keys) this.bindGroups.delete(k); this.bgByView.delete(vid); }
++    }
+     const b = this.buffers.get(id);
+     if (b) { this.pendingDestroy = (this.pendingDestroy || []).concat([b.gpu]); this.buffers.delete(id); }
+     this.shaders.delete(id);
+@@ -818,7 +832,9 @@ export class Renderer {
+       try {
+         const nvs = vs.info.bindings.samplers.length;
+         const vsl = this.stageLayout(vs, 0, texKinds.slice(0, nvs)), psl = this.stageLayout(ps, 1, texKinds.slice(nvs));
+-        const layout = this.dev.createPipelineLayout({ bindGroupLayouts: [vsl, psl] });
++        const lk = this.objId(vsl) + '|' + this.objId(psl);
++        let layout = this.pipeLayouts.get(lk);
++        if (!layout) this.pipeLayouts.set(lk, (layout = this.dev.createPipelineLayout({ bindGroupLayouts: [vsl, psl] })));
+         const stripFormat = topology === 'triangle-strip' || topology === 'line-strip' ? (indexed ? (stripBits === 32 ? 'uint32' : 'uint16') : undefined) : undefined;
+         const desc = {
+           layout,
+@@ -884,9 +900,17 @@ export class Renderer {
+           entries.push({ binding: smps[i].texture_binding, resource: texViews[ti + i] });
+           entries.push({ binding: smps[i].sampler_binding, resource: samplers[ti + i] });
+         }
+-        if (this.bindGroups.size > 50000) this.bindGroups.clear();
++        // bounded by groups made, not by live ones: destroy() removes groups, so the map alone might never reach it
++        if (++this.bgMade > 50000) { this.bindGroups.clear(); this.bgByView.clear(); this.bgMade = 0; }
+         bg = this.dev.createBindGroup({ layout, entries });
+         this.bindGroups.set(bkey, bg);
++        for (let i = 0; i < smps.length; i++) {
++          const v = texViews[ti + i];
++          if (v === this.dummy['2d'] || v === this.dummy.cube || v === this.dummy['3d']) continue;   // never destroyed
++          const vid = this.objId(v);
++          const ks = this.bgByView.get(vid);
++          if (ks) ks.add(bkey); else this.bgByView.set(vid, new Set([bkey]));
++        }
+       }
+       ti += smps.length;
+       // constants unchanged since this pass last uploaded at least as many: reuse that upload, and skip the call
+@@ -1042,7 +1066,9 @@ export class Renderer {
+       return;
+     }
+     if (!(d.gpu.usage & GPUTextureUsage.RENDER_ATTACHMENT)) return;
+-    const view = s.gpu.createView({ dimension: '2d', baseMipLevel: sl, mipLevelCount: 1, baseArrayLayer: sf, arrayLayerCount: 1 });
++    const vk = sl + ':' + sf, views = s.blitViews || (s.blitViews = new Map());
++    let view = views.get(vk);
++    if (!view) views.set(vk, (view = s.gpu.createView({ dimension: '2d', baseMipLevel: sl, mipLevelCount: 1, baseArrayLayer: sf, arrayLayerCount: 1 })));
+     this.blit(view, this.targetView(d, df, dl), d.gpuFormat, rect);
+   }
+ 
