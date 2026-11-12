@@ -386,6 +386,25 @@
     var M = window.Module;
     try { return !!(M && M.HEAPU8 && M.HEAPU8[0x11DEA2B] === 1); } catch (e) { return true; }
   }
+  // Speicher-Wächter: wird der Spielspeicher knapp, die eigene Aufräumfunktion des Spiels (pcb = PurgeCellBuffers)
+  // aufrufen – sie gibt zwischengespeicherte Gebiete frei, sodass neue Gebiete diesen Platz nutzen statt neuen.
+  // Auf dem iPad schließt das System den Tab, wenn er zu viel belegt (Protokoll: Abbruch ohne Fehlermeldung bei
+  // 2,4 GB Grenze bei 1,9 GB belegt). Nur in der Welt, höchstens alle 2 Minuten.
+  var memGuardAt = 0;
+  function memGuard() {
+    var M = window.Module, R = window.fnvReport;
+    try {
+      var s = R && R.samples && R.samples[R.samples.length - 1];
+      if (!M || !M._fnv_heap_used || !M._sbrk || !s || s.stage < 3 || menuOpen() || Date.now() - memGuardAt < 120000) return;
+      var used = (M._fnv_heap_used() >>> 0) / 1024, brk = (M._sbrk(0) >>> 0) / 1048576;
+      // die Grenze des Spielspeichers sinkt nie: nur auslösen, wenn sie seit dem letzten Aufräumen gewachsen ist
+      if (used < 1750 && !(brk >= 2450 && brk - (memGuard.brkAt || 0) >= 64)) return;
+      memGuardAt = Date.now();
+      memGuard.brkAt = brk;
+      M.ccall('fnv_console', null, ['string'], ['pcb']);
+      memGuard.runs = (memGuard.runs || 0) + 1;
+    } catch (e) { /* egal */ }
+  }
   function tapKey(k) {
     var M = window.Module;
     if (!M || !M._fnv_key) return;
@@ -517,7 +536,7 @@
       cores: navigator.hardwareConcurrency, mem: navigator.deviceMemory, touch: navigator.maxTouchPoints, quality: b.quality, env: window.fonvEnv,
       standalone: !!navigator.standalone, display: mode() };
     // belegter Spiel-Speicher (Obergrenze des Heaps, sbrk) und offene Musikstücke: zeigt, ob über die Zeit etwas wächst
-    try { var Mo = window.Module; if (Mo && Mo._sbrk) e.heapMB = Math.round((Mo._sbrk(0) >>> 0) / 1048576); if (Mo && Mo._fnv_heap_used) e.usedMB = Math.round((Mo._fnv_heap_used() >>> 0) / 1024); } catch (er) { /* egal */ }
+    try { var Mo = window.Module; if (Mo && Mo._sbrk) e.heapMB = Math.round((Mo._sbrk(0) >>> 0) / 1048576); if (Mo && Mo._fnv_heap_used) e.usedMB = Math.round((Mo._fnv_heap_used() >>> 0) / 1024); if (memGuard.runs) e.pcb = memGuard.runs; } catch (er) { /* egal */ }
     try { if (window.fnvAudio && window.fnvAudio.tracks) e.music = window.fnvAudio.tracks.size; } catch (er) { /* egal */ }
     e.res = (function () { var c = document.getElementById('screen'); return c ? c.width + 'x' + c.height : ''; })();
     var sig = [e.text, e.stage, e.mb, e.fail, e.hidden, e.status.replace(/\d+ fps/, 'fps')].join('|');
@@ -663,6 +682,7 @@
     diagHook();
     diagTick(true);
     setInterval(diagTick, 5000);
+    setInterval(memGuard, 15000);
     window.addEventListener('online', function () { setTimeout(checkAuth, 2000); });
     panel.addEventListener('click', onClick);
     panel.addEventListener('submit', onSubmit);

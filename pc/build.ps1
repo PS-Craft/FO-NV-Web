@@ -37,15 +37,23 @@ function Run($what, [string[]]$cmd) {
 if (-not $AppOnly) {
   Push-Location $Recomp
   try {
-      # eigene Korrekturen an der Engine einspielen (schon eingespielte erkennt die Gegenprobe)
-      foreach ($p in Get-ChildItem (Join-Path $Here 'patches') -Filter *.patch -ErrorAction SilentlyContinue | Sort-Object Name) {
+      # eigene Korrekturen an der Engine einspielen. Mehrere Patches ändern dieselben Dateien (z. B. host_web.cpp), deshalb
+      # nicht einzeln prüfen, ob einer schon drin ist: die betroffenen Dateien auf den Stand der Engine zurücksetzen und
+      # alle der Reihe nach einspielen. Die bisherigen Fassungen landen vorher in out\patch-backup (falls dort von Hand
+      # etwas geändert wurde, das in keinem Patch steht).
+      $patches = @(Get-ChildItem (Join-Path $Here 'patches') -Filter *.patch -ErrorAction SilentlyContinue | Sort-Object Name)
+      $touched = @($patches | ForEach-Object { cmd /c "git apply --numstat `"$($_.FullName)`" 2>nul" } | ForEach-Object { ($_ -split "`t")[2] } | Sort-Object -Unique)
+      if ($touched.Count) {
+          $bak = Join-Path $Recomp 'out\patch-backup'
+          foreach ($f in $touched) { if (Test-Path $f) { $d = Join-Path $bak (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $f $d -Force } }
           # über cmd, damit die Meldungen von git (stderr) unter Windows PowerShell 5.1 keinen Abbruch auslösen
-          cmd /c "git apply --check `"$($p.FullName)`" >nul 2>&1"
-          if ($LASTEXITCODE -eq 0) { cmd /c "git apply `"$($p.FullName)`""; Write-Host "Patch eingespielt: $($p.Name)" }
-          else {
-              cmd /c "git apply --reverse --check `"$($p.FullName)`" >nul 2>&1"
-              if ($LASTEXITCODE -ne 0) { throw "Patch passt nicht mehr zur Engine: $($p.Name)" }
-          }
+          cmd /c "git checkout HEAD -- $($touched -join ' ') 2>nul"
+          if ($LASTEXITCODE -ne 0) { throw 'Engine-Dateien ließen sich nicht zurücksetzen' }
+      }
+      foreach ($p in $patches) {
+          cmd /c "git apply `"$($p.FullName)`" 2>nul"
+          if ($LASTEXITCODE -ne 0) { throw "Patch passt nicht mehr zur Engine: $($p.Name) (alte Dateien: out\patch-backup)" }
+          Write-Host "Patch eingespielt: $($p.Name)"
       }
       Run 'Programm in C++ übersetzen (recomp.py)'      @($Py, '-B', 'tools/recomp.py', '--exe', $Exe, '--shards', '64')
       Run 'Import-Tabelle'                               @($Py, '-B', 'tools/gen_import_table.py', '--exe', $Exe)

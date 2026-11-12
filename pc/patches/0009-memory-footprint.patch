@@ -1,0 +1,131 @@
+diff --git a/port/recomp/host_web.cpp b/port/recomp/host_web.cpp
+index a27c3b9..2420ef9 100644
+--- a/port/recomp/host_web.cpp
++++ b/port/recomp/host_web.cpp
+@@ -82,34 +82,41 @@ HostThread* g_main_ht;                          // the game's main thread, for f
+ // heap: malloc here never gives memory back below its break (dlmalloc MORECORE_CANNOT_TRIM), so the linear memory past
+ // it has never been written and is zero. Zeroing it again, as before, made every page of those reservations resident at
+ // once, used or not, which counts against the tab's memory on an iPad. A released large block is kept for a later
+-// request of the same size and zeroed then.
++// request and zeroed then. Released blocks are kept by address and merged with free neighbours, and a request takes
++// the smallest free block that fits (split if larger): with reuse only at the exact same size, the break kept growing
++// during play (+160 MB over 20 world loads, measured), and on an iPad every newly touched megabyte stays resident.
+ std::mutex g_big_mx;
+-std::map<uint32_t, uint32_t> g_big;                    // large blocks from the break: address -> size
+-std::multimap<uint32_t, uint32_t> g_big_free;          // released ones: size -> address
++std::map<uint32_t, uint32_t> g_big;                    // large blocks in use: address -> size
++std::map<uint32_t, uint32_t> g_big_free;               // released ones: address -> size (merged)
+ const uint32_t kBigBlock = 8u << 20;
++// fresh memory from the break, never written, so zero (pages become resident only when touched)
++uint32_t brk_alloc(uint32_t rs)
++{
++    uintptr_t brk = (uintptr_t)sbrk(0);
++    uintptr_t pad = (65536 - (brk & 65535)) & 65535;
++    void* p = sbrk((intptr_t)(pad + rs));
++    return p == (void*)-1 ? 0 : (uint32_t)((uintptr_t)p + pad);
++}
+ uint32_t galloc(uint32_t size)
+ {
+     uint32_t rs = (size + 65535) & ~65535u;
+     if (rs >= kBigBlock)
+     {
+         std::lock_guard<std::mutex> lk(g_big_mx);
+-        auto it = g_big_free.find(rs);
+-        if (it != g_big_free.end())
++        auto best = g_big_free.end();
++        for (auto it = g_big_free.begin(); it != g_big_free.end(); ++it)
++            if (it->second >= rs && (best == g_big_free.end() || it->second < best->second)) best = it;
++        if (best != g_big_free.end())
+         {
+-            uint32_t a = it->second;
+-            g_big_free.erase(it);
+-            memset((void*)(uintptr_t)a, 0, rs);
+-            return a;
+-        }
+-        uintptr_t brk = (uintptr_t)sbrk(0);
+-        uintptr_t pad = (65536 - (brk & 65535)) & 65535;
+-        void* p = sbrk((intptr_t)(pad + rs));
+-        if (p != (void*)-1)
+-        {
+-            uint32_t a = (uint32_t)((uintptr_t)p + pad);
++            uint32_t a = best->first, have = best->second;
++            g_big_free.erase(best);
++            if (have > rs) g_big_free[a + rs] = have - rs;
+             g_big[a] = rs;
++            memset((void*)(uintptr_t)a, 0, rs);
+             return a;
+         }
++        uint32_t a = brk_alloc(rs);
++        if (a) { g_big[a] = rs; return a; }
+     }
+     void* p = aligned_alloc(65536, rs);
+     memset(p, 0, size);
+@@ -121,7 +128,17 @@ void gfree(uint32_t a)
+     {
+         std::lock_guard<std::mutex> lk(g_big_mx);
+         auto it = g_big.find(a);
+-        if (it != g_big.end()) { g_big_free.insert({it->second, a}); return; }
++        if (it != g_big.end())
++        {
++            uint32_t size = it->second;
++            g_big.erase(it);
++            auto next = g_big_free.find(a + size);
++            if (next != g_big_free.end()) { size += next->second; g_big_free.erase(next); }
++            auto prev = g_big_free.lower_bound(a);
++            if (prev != g_big_free.begin() && (--prev)->first + prev->second == a) prev->second += size;
++            else g_big_free[a] = size;
++            return;
++        }
+     }
+     free((void*)(uintptr_t)a);
+ }
+@@ -137,7 +154,13 @@ HostThread* new_thread(uint32_t stack_size)
+     HostThread* ht = slot < 64 ? &s_threads[slot] : (HostThread*)aligned_alloc(64, sizeof(HostThread));
+     if (slot < 64) g_all_threads[slot] = ht;
+     memset(ht, 0, sizeof(HostThread));
+-    ht->stack_lo = galloc(stack_size);
++    // the guest stack straight from the break (zero, never freed): through galloc it was memset in full, which made
++    // 4 MB per thread resident at once (~25 threads); only the part a thread really uses is touched now
++    {
++        std::lock_guard<std::mutex> lk(g_big_mx);
++        ht->stack_lo = brk_alloc((stack_size + 65535) & ~65535u);
++    }
++    if (!ht->stack_lo) ht->stack_lo = galloc(stack_size);
+     ht->stack_hi = ht->stack_lo + stack_size;
+     uint32_t teb = ht->teb = galloc(0x1000);
+     M32(teb + 0x00) = 0xffffffffu;
+@@ -586,7 +609,9 @@ int main(int argc, char** argv)
+     pal_fs_chdir(dir.c_str());
+     if (g_browser)
+     {
+-        pal_d3d_enable_ring(128u << 20);                    // web/recomp/renderer.js consumes it on the page's thread
++        // web/recomp/renderer.js consumes it on the page's thread. 64 MB (was 128): the ring is written all round, so
++        // all of it is resident; the biggest packet (a 2048x2048 32-bit texture level, 16 MB) still fits easily
++        pal_d3d_enable_ring(64u << 20);
+         pal_sound_enable(16384, 4096);                      // web/recomp/audio-worklet.js plays it (~85 ms ahead)
+         pal_dshow_enable_sink();                            // music: the page plays the tracks the graphs run
+         pal_vorbis_enable_decoder();                        // voices: the page decodes Ogg Vorbis
+diff --git a/port/recomp/pal_d3d9.cpp b/port/recomp/pal_d3d9.cpp
+index b9246c9..42343c4 100644
+--- a/port/recomp/pal_d3d9.cpp
++++ b/port/recomp/pal_d3d9.cpp
+@@ -49,7 +49,18 @@ void emit(uint32_t op, std::initializer_list<uint32_t> words, const void* data =
+     uint32_t payload = (uint32_t)words.size() * 4 + ((len + 3) & ~3u);
+     uint32_t total = 8 + payload;
+     std::lock_guard<std::mutex> lk(g_ring_mx);
+-    if (total + 64 > g_ring.size) return;                  // too big for the ring: dropped (logged by the renderer as a gap)
++    // too big for the ring: dropped (the renderer sees a gap). Half the ring at most, so the wrap below can always make room
++    if (total + 64 > g_ring.size / 2)
++    {
++        static int told;
++        if (told++ < 5)
++        {
++            char buf[96];
++            snprintf(buf, sizeof buf, "[d3d9] packet of %u KB (op %u) too big for the ring: dropped%c", total >> 10, op, 10);
++            fnv_host_log(buf);
++        }
++        return;
++    }
+     ring_wait_space(total + 8);
+     uint32_t w = g_ring.write;
+     if (w + total + 8 > g_ring.size)

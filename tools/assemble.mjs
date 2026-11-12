@@ -180,10 +180,10 @@ const LITE_INI = [
   'iMaxDecalsPerFrame:Display=2', 'iActorShadowCountInt:Display=0', 'iActorShadowCountExt:Display=0',
   'iShadowMapResolution:Display=256', 'fSpecularLODStartFade:Display=200', 'fShadowLODStartFade:Display=100',
   'fLightLODStartFade:Display=200', 'fDecalLOD1:Display=500', 'fDecalLOD2:Display=1000',
-  'fTreeLoadDistance:TerrainManager=0', 'fBlockLoadDistanceLow:TerrainManager=25000', 'fBlockLoadDistance:TerrainManager=125000',
+  'fTreeLoadDistance:TerrainManager=0', 'fBlockLoadDistanceLow:TerrainManager=25000', 'fBlockLoadDistance:TerrainManager=50000',
   'fSplitDistanceMult:TerrainManager=0.75', 'fHighBlockLoadDistanceLow:TerrainManager=20000',
   'iWaterReflectWidth:Water=256', 'iWaterReflectHeight:Water=256',
-  'uInterior Cell Buffer:General=1', 'uExterior Cell Buffer:General=12', 'bPreemptivelyUnloadCells:General=1',
+  'uInterior Cell Buffer:General=1', 'uExterior Cell Buffer:General=4', 'bPreemptivelyUnloadCells:General=1',
   'iPreloadSizeLimit:General=8388608', 'bSelectivePurgeUnusedOnFastTravel:General=1',
 ].join(';');
 // automatische Qualität: im Akku-Modus (30 Bilder/s) ist 30 das Ziel, sonst senkt sie die Sichtweite unnötig
