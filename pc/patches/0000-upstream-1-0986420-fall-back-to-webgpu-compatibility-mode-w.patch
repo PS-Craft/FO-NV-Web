@@ -1,0 +1,254 @@
+diff --git a/web/recomp/index.html b/web/recomp/index.html
+index 97456b9..e4a0200 100644
+--- a/web/recomp/index.html
++++ b/web/recomp/index.html
+@@ -303,9 +303,9 @@ function log(m, err) {
+ }
+ 
+ if (!crossOriginIsolated) log('page is not cross-origin isolated: SharedArrayBuffer (wasm threads) is unavailable', true);
+-let device, features, adapter;
++let device, features, adapter, compat;
+ try {
+-  ({ device, features, adapter } = await createDevice());
++  ({ device, features, adapter, compat } = await createDevice());
+ } catch (e) {
+   // no WebGPU (or no adapter): say so where the player looks, not only in the hidden log
+   status.textContent = 'cannot start: ' + e.message;
+@@ -313,18 +313,23 @@ try {
+   const bootRoot = document.getElementById('boot');
+   bootRoot.hidden = false; bootRoot.classList.add('failed');
+   document.getElementById('bootPhase').textContent = 'This browser cannot run the game: ' + e.message;
+-  document.getElementById('bootDetail').textContent = 'It needs WebGPU: a recent Chrome or Edge on a desktop, or Chrome on Android. Report a problem (below) if you think it should work.';
++  document.getElementById('bootDetail').textContent = /Android/i.test(navigator.userAgent)
++    ? 'It needs WebGPU, and this browser gave the page no graphics adapter. Update Chrome, then restart it (a browser that '
++      + 'had a graphics crash turns WebGPU off until it restarts). If it still fails, Chrome may have blocked your phone\'s '
++      + 'graphics driver: chrome://gpu says so, and the chrome://flags option "Unsafe WebGPU Support" lifts the block. '
++      + 'Report a problem (below) if none of this helps.'
++    : 'It needs WebGPU: a recent Chrome or Edge on a desktop, or Chrome on Android. Report a problem (below) if you think it should work.';
+   throw e;
+ }
+ // for problem reports (report.js): the adapter the game runs on
+ window.fnvGpu = { info: { vendor: adapter.info?.vendor, architecture: adapter.info?.architecture, device: adapter.info?.device,
+-  description: adapter.info?.description }, fallback: adapter.isFallbackAdapter, features: [...adapter.features], required: features,
++  description: adapter.info?.description }, fallback: adapter.isFallbackAdapter, compat, features: [...adapter.features], required: features,
+   limits: Object.fromEntries(Object.keys(Object.getPrototypeOf(adapter.limits)).filter((k) => typeof adapter.limits[k] === 'number').map((k) => [k, adapter.limits[k]])) };
+ device.lost.then((i) => log(`WebGPU device lost (${i.reason}): ${i.message}`, true));
+ const canvas = document.getElementById('screen');
+-const renderer = new Renderer(device, canvas, { log: (m) => log('[renderer] ' + m, true) });
++const renderer = new Renderer(device, canvas, { log: (m) => log('[renderer] ' + m, true), compat });
+ window.renderer = renderer;
+-log('WebGPU features: ' + features.join(', '));
++log('WebGPU features: ' + features.join(', ') + (compat ? ' (compatibility mode: no full WebGPU adapter here)' : ''));
+ 
+ // FNV_* settings from the query string (?FNV_TRACE_IMPORTS=1), read by the game's getenv
+ const env = {};
+diff --git a/web/recomp/precheck.js b/web/recomp/precheck.js
+index 1e7821c..3596efd 100644
+--- a/web/recomp/precheck.js
++++ b/web/recomp/precheck.js
+@@ -119,9 +119,19 @@
+     } else if (!n.gpu) {
+       block('No WebGPU', 'The game draws with WebGPU, and this browser does not have it. Use a recent Chrome or Edge on a computer, or Chrome on Android. On Linux, WebGPU may need to be turned on in chrome://flags.');
+     } else {
+-      const adapter = await timeout(n.gpu.requestAdapter({ powerPreference: 'high-performance' }), 5000);
++      // the same order as the renderer (renderer.js requestGpuAdapter): a full adapter, else a compatibility one
++      const TIMEOUT = {};
++      let adapter = await timeout(n.gpu.requestAdapter({ powerPreference: 'high-performance' }), 8000, TIMEOUT);
++      if (adapter === TIMEOUT) info.adapterTimedOut = true;
++      if (!adapter || adapter === TIMEOUT) {
++        adapter = await timeout(n.gpu.requestAdapter({ featureLevel: 'compatibility' }), 8000, TIMEOUT);
++        if (adapter === TIMEOUT) { info.adapterTimedOut = true; adapter = null; }
++        else if (adapter && !adapter.features.has('core-features-and-limits')) info.compat = true;
++      }
+       if (!adapter) {
+-        block('No graphics adapter', 'This browser has WebGPU, but it would not give the game a graphics card. Your graphics driver may be too old or blocked by the browser: update it, and check that hardware acceleration is on in the browser\'s settings.');
++        block('No graphics adapter', (info.adapterTimedOut ? 'This browser has WebGPU, but it did not answer the game\'s request for a graphics card. ' : 'This browser has WebGPU, but it would not give the game a graphics card. ')
++          + (info.mobile ? 'Update the browser and restart it: after a graphics crash it turns WebGPU off until it restarts. Chrome may also have blocked the phone\'s graphics driver (chrome://gpu says so).'
++            : 'Your graphics driver may be too old or blocked by the browser: update it, and check that hardware acceleration is on in the browser\'s settings.'));
+       } else {
+         const ai = adapter.info || {};
+         info.gpu = [ai.vendor, ai.architecture, ai.description].filter(Boolean).join(' ') || 'unknown';
+@@ -129,6 +139,7 @@
+         if (adapter.isFallbackAdapter || ai.isFallbackAdapter) {
+           warn('Software graphics', 'The browser is drawing with the CPU instead of a graphics card, so the game will be very slow. Turn on hardware acceleration in the browser\'s settings, or update your graphics driver.');
+         }
++        if (info.compat) warn('Older graphics mode', 'This browser offers only WebGPU\'s compatibility mode here (OpenGL ES). The game runs in it, but a few effects that need full WebGPU are left out.');
+         if (!info.bc) warn('Slower textures', 'This graphics chip cannot read the game\'s compressed textures directly, so they are unpacked on the CPU. The game works, but loading takes longer.');
+       }
+     }
+diff --git a/web/recomp/renderer.js b/web/recomp/renderer.js
+index 2dbb1a9..ef1210f 100644
+--- a/web/recomp/renderer.js
++++ b/web/recomp/renderer.js
+@@ -263,6 +263,9 @@ export class Renderer {
+     this.dev = device;
+     // BC (DXT) textures stay compressed on the GPU when it can sample them; otherwise they are decoded to BGRA8
+     this.bc = device.features.has('texture-compression-bc');
++    // WebGPU compatibility mode (OpenGL ES phones whose browser offers no full adapter): stricter rules on texture
++    // views, blending and depth sampling (createDevice says which kind of device this is)
++    this.compat = !!opts.compat;
+     this.canvas = canvas;
+     this.ctx = canvas.getContext('webgpu');
+     this.canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+@@ -322,7 +325,8 @@ export class Renderer {
+ 
+   makeDummies() {
+     const mk = (dim, layers) => {
+-      const t = this.dev.createTexture({ size: [1, 1, layers], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST, dimension: dim === '3d' ? '3d' : '2d' });
++      const t = this.dev.createTexture({ size: [1, 1, layers], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST, dimension: dim === '3d' ? '3d' : '2d',
++        textureBindingViewDimension: dim });
+       for (let l = 0; l < layers; l++) this.dev.queue.writeTexture({ texture: t, origin: [0, 0, l] }, new Uint8Array([0, 0, 0, 255]), { bytesPerRow: 4 }, [1, 1, 1]);
+       return t.createView({ dimension: dim });
+     };
+@@ -389,7 +393,7 @@ export class Renderer {
+     let gpu;
+     try {
+       gpu = this.dev.createTexture({ size: [w, h, layers], format: gpuFormat, usage: u, mipLevelCount: Math.min(levels, maxLevels),
+-        dimension: kind === 2 ? '3d' : '2d' });
++        dimension: kind === 2 ? '3d' : '2d', textureBindingViewDimension: kind === 1 ? 'cube' : kind === 2 ? '3d' : '2d' });
+     } catch (e) {
+       this.warn(`texture ${w}x${h} fmt ${fmt} (${gpuFormat}): ${e.message}`);
+       return;
+@@ -795,7 +799,10 @@ export class Renderer {
+           let inUse = a.depth && a.depth.t === t;
+           for (let ci = 0; !inUse && ci < a.colors.length; ci++) inUse = a.colors[ci] && a.colors[ci].t === t;
+           const dimOk = ((s.dim === 'cube') === (t.kind === 1)) && ((s.dim === '3d') === (t.kind === 2));
+-          if (!inUse && dimOk) { view = t.sampleView; uf = !!(t.info.unfilterable || t.isDepth); }
++          // compatibility mode cannot sample depth through an ordinary sampler: those draws see the dummy
++          const depthOk = !(this.compat && t.isDepth);
++          if (!depthOk) this.warn('depth texture sampled (compatibility mode): dummy bound');
++          if (!inUse && dimOk && depthOk) { view = t.sampleView; uf = !!(t.info.unfilterable || t.isDepth); }
+           this.used.add(t.id);
+         }
+         texKinds += uf ? 'u' : 'f';
+@@ -814,7 +821,9 @@ export class Renderer {
+     let pipe = this.pipelines.get(key);
+     if (pipe === undefined) {
+       const writeMasks = [RS.COLORWRITEENABLE, 190, 191, 192].map((r) => rs[r] & 15);
+-      const blend = this.blendState();
++      let blend = this.blendState();
++      // compatibility mode: every colour target shares one blend state and write mask
++      if (this.compat) { writeMasks.fill(writeMasks[0]); if (colorFormats.some((f) => f && f.includes('32float'))) blend = undefined; }
+       try {
+         const nvs = vs.info.bindings.samplers.length;
+         const vsl = this.stageLayout(vs, 0, texKinds.slice(0, nvs)), psl = this.stageLayout(ps, 1, texKinds.slice(nvs));
+@@ -1036,12 +1045,14 @@ export class Renderer {
+     const sw = Math.max(1, s.w >> sl), sh = Math.max(1, s.h >> sl), dw = Math.max(1, d.w >> dl), dh = Math.max(1, d.h >> dl);
+     const full = (dx1 | 0) === -1 || dx1 === 0xffffffff;
+     const rect = full ? null : [dx0, dy0, dx1 - dx0, dy1 - dy0];
+-    if (!rect && sw === dw && sh === dh && s.gpuFormat === d.gpuFormat) {
++    if (!rect && sw === dw && sh === dh && s.gpuFormat === d.gpuFormat && !(this.compat && s.gpuFormat.startsWith('bc'))) {
+       this.endPass();
+       this.encoder.copyTextureToTexture({ texture: s.gpu, mipLevel: sl, origin: [0, 0, sf] }, { texture: d.gpu, mipLevel: dl, origin: [0, 0, df] }, [sw, sh, 1]);
+       return;
+     }
+     if (!(d.gpu.usage & GPUTextureUsage.RENDER_ATTACHMENT)) return;
++    // compatibility mode samples a texture only through a view of all its layers: no single cube face
++    if (this.compat && s.kind === 1) { this.warn('stretch from a cube face (compatibility mode): skipped'); return; }
+     const view = s.gpu.createView({ dimension: '2d', baseMipLevel: sl, mipLevelCount: 1, baseArrayLayer: sf, arrayLayerCount: 1 });
+     this.blit(view, this.targetView(d, df, dl), d.gpuFormat, rect);
+   }
+@@ -1142,12 +1153,15 @@ export class Renderer {
+ // GPU device with the features the game's formats need
+ export async function createDevice() {
+   if (!navigator.gpu) throw new Error('WebGPU is not available in this browser');
+-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
++  const query = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
++  const { adapter, compat } = await requestGpuAdapter(query.has('compat'));
+   if (!adapter) throw new Error('no WebGPU adapter');
+   const want = ['texture-compression-bc', 'float32-filterable', 'depth-clip-control'];
+   // ?nobc tests the path phones take: no BC texture support, so DXT textures are decoded on the CPU
+-  const noBc = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nobc');
++  const noBc = query.has('nobc');
+   const requiredFeatures = want.filter((f) => adapter.features.has(f) && !(noBc && f === 'texture-compression-bc'));
++  // a compatibility adapter on hardware that can do more still gives a full device when asked for one
++  if (compat === 'adapter' && adapter.features.has('core-features-and-limits')) requiredFeatures.push('core-features-and-limits');
+   const device = await adapter.requestDevice({ requiredFeatures, requiredLimits: {
+     maxBindGroups: Math.min(4, adapter.limits.maxBindGroups),
+     maxSampledTexturesPerShaderStage: adapter.limits.maxSampledTexturesPerShaderStage,
+@@ -1155,5 +1169,20 @@ export async function createDevice() {
+     maxUniformBufferBindingSize: adapter.limits.maxUniformBufferBindingSize,
+     maxBufferSize: adapter.limits.maxBufferSize,
+   } });
+-  return { adapter, device, features: requiredFeatures };
++  return { adapter, device, features: requiredFeatures, compat: !!compat && !requiredFeatures.includes('core-features-and-limits') };
++}
++
++// The adapter to run on. Some phones' browsers (Chrome on Android with a blocklisted Vulkan driver) give no full
++// adapter but do give a compatibility one (WebGPU on OpenGL ES, Chrome 146+), so that is the fallback.
++// forceCompat (?compat) takes the compatibility path on any machine, to test it on a desktop.
++// compat: false (a full adapter), 'adapter' (a compatibility adapter) or 'forced'.
++export async function requestGpuAdapter(forceCompat = false) {
++  let adapter = null;
++  if (!forceCompat) {
++    adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
++    if (!adapter) adapter = await navigator.gpu.requestAdapter();
++    if (adapter) return { adapter, compat: false };
++  }
++  adapter = await navigator.gpu.requestAdapter({ featureLevel: 'compatibility' });
++  return { adapter, compat: adapter ? (forceCompat ? 'forced' : 'adapter') : false };
+ }
+diff --git a/web/recomp/replay.html b/web/recomp/replay.html
+index 601bcf3..f2f1045 100644
+--- a/web/recomp/replay.html
++++ b/web/recomp/replay.html
+@@ -23,9 +23,9 @@ const log = (m) => { logEl.textContent += m + '\n'; console.log(m); };
+ const q = new URLSearchParams(location.search);
+ const skipTo = +(q.get('frame') || 0);
+ try {
+-  const { device, features } = await createDevice();
+-  log('features: ' + features.join(', '));
+-  const r = new Renderer(device, document.getElementById('c'), { log });
++  const { device, features, compat } = await createDevice();
++  log('features: ' + features.join(', ') + (compat ? ' (compatibility mode)' : ''));
++  const r = new Renderer(device, document.getElementById('c'), { log, compat });
+   window.renderer = r;
+   const buf = await (await fetch('/ring.bin')).arrayBuffer();
+   const u32 = new Uint32Array(buf), u8 = new Uint8Array(buf);
+diff --git a/web/recomp/report.js b/web/recomp/report.js
+index d6d781c..3980f2a 100644
+--- a/web/recomp/report.js
++++ b/web/recomp/report.js
+@@ -116,10 +116,17 @@
+     const g = { webgpu: !!navigator.gpu };
+     if (window.fnvGpu) g.used = window.fnvGpu;            // the adapter the renderer took (index.html)
+     else if (navigator.gpu) {
+-      const a = await timeout(navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }), 4000);
+-      if (a && !a.error) g.adapter = { info: safe(() => ({ ...a.info, vendor: a.info.vendor, architecture: a.info.architecture, device: a.info.device, description: a.info.description })),
++      // the renderer's order (renderer.js requestGpuAdapter): a full adapter, else a compatibility one
++      const TIMEOUT = 'no adapter (timed out)';
++      let a = await timeout(navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }), 4000, TIMEOUT);
++      if (!a || a === TIMEOUT) {
++        const c = await timeout(navigator.gpu.requestAdapter({ featureLevel: 'compatibility' }), 4000, TIMEOUT);
++        g.compatAdapter = c && c !== TIMEOUT && !c.error ? true : c || 'none';
++        if (c && c !== TIMEOUT && !c.error) a = c;
++      }
++      if (a && a !== TIMEOUT && !a.error) g.adapter = { info: safe(() => ({ ...a.info, vendor: a.info.vendor, architecture: a.info.architecture, device: a.info.device, description: a.info.description })),
+         features: [...a.features], limits: plainLimits(a.limits), fallback: a.isFallbackAdapter };
+-      else g.adapter = a || 'no adapter (timed out)';
++      else g.adapter = a || 'none';
+     }
+     g.preferredFormat = safe(() => navigator.gpu && navigator.gpu.getPreferredCanvasFormat());
+     g.webgl = safe(() => {
+@@ -222,7 +229,8 @@
+ 
+   function pageState() {
+     const b = window.fnvBoot, r = window.renderer, a = window.fnvAudio, pump = window.fnvPump;
+-    const copy = (o) => safe(() => JSON.parse(JSON.stringify(o, (k, v) => (typeof v === 'function' ? undefined : v))));
++    // absent objects stay absent: JSON.stringify(undefined) is undefined, which JSON.parse rejects
++    const copy = (o) => (o == null ? o : safe(() => JSON.parse(JSON.stringify(o, (k, v) => (typeof v === 'function' ? undefined : v)))));
+     const st = {
+       url: location.href, referrer: document.referrer, title: document.title, embedded: window.parent !== window,
+       status: safe(() => document.getElementById('status').textContent), visibility: document.visibilityState,
+@@ -270,9 +278,9 @@
+     if (ua.uaData) L.push(`OS: ${ua.uaData.platform} ${ua.uaData.platformVersion || ''}${win11} ${ua.uaData.architecture || ''}${ua.uaData.bitness ? '-' + ua.uaData.bitness : ''}${ua.uaData.model ? ' model ' + ua.uaData.model : ''}${ua.uaData.mobile ? ' (mobile)' : ''}`);
+     L.push(`Device: ${ua.hardwareConcurrency} threads, ${ua.deviceMemoryGB || '?'} GB, screen ${rep.browser.screen.width}x${rep.browser.screen.height} @${rep.browser.screen.dpr}, touch ${ua.maxTouchPoints}`);
+     const ad = gpu.used || gpu.adapter || {}, info = ad.info || {};
+-    L.push(`GPU: ${gpu.webgpu ? [info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(' / ') || 'WebGPU (no adapter info)' : 'no WebGPU'}; WebGL ${gpu.webgl && gpu.webgl.renderer || '-'}`);
++    L.push(`GPU: ${gpu.webgpu ? [info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(' / ') || 'WebGPU (no adapter info)' : 'no WebGPU'}${gpu.used && gpu.used.compat ? ' (compatibility mode)' : ''}; WebGL ${gpu.webgl && gpu.webgl.renderer || '-'}`);
+     L.push(`Page: ${rep.page.url}  up ${rep.page.uptimeSec} s, ${rep.page.visibility}, isolated ${rep.browser.caps.crossOriginIsolated}`);
+-    L.push(`Start-up: quality ${b.quality}, mode ${b.mode}, phase ${b.phase}, stage ${b.stage}, ready ${b.ready}, failed ${b.failed}${b.failText ? ' (' + b.failText + ')' : ''}, stalled ${b.stalled}, ${b.kb} KB in ${b.fetches} fetches, ${b.retries} retries`);
++    if (rep.page.boot) L.push(`Start-up: quality ${b.quality}, mode ${b.mode}, phase ${b.phase}, stage ${b.stage}, ready ${b.ready}, failed ${b.failed}${b.failText ? ' (' + b.failText + ')' : ''}, stalled ${b.stalled}, ${b.kb} KB in ${b.fetches} fetches, ${b.retries} retries`);
+     L.push(`Status bar: ${rep.page.status}`);
+     const s = rep.samples[rep.samples.length - 1];
+     if (s) L.push(`Last sample: ${s.fps} fps, frame ${s.frames}, heap ${s.heapMB} MB, JS ${s.jsMB} MB`);

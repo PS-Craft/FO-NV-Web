@@ -21,6 +21,7 @@ $Root   = 'C:\FNV-Web'
 $Recomp = Join-Path $Root 'fnv-web-recomp'
 $Py     = Join-Path $Recomp 'local\venv\Scripts\python.exe'
 $Here   = Split-Path -Parent $MyInvocation.MyCommand.Path
+$EngineBase = '8f79919'                                   # fnv-web-recomp, Basis der Patches (pc\patches)
 $Hosting = Join-Path (Split-Path -Parent $Here) 'hosting'
 $Exe    = if ($env:FNV_GAME) { Join-Path $env:FNV_GAME 'FalloutNV.exe' } else { '' }
 if (-not $AppOnly -and -not (Test-Path $Exe)) { throw "FalloutNV.exe nicht gefunden (FNV_GAME=$env:FNV_GAME). Erst setup.ps1 ausführen." }
@@ -47,8 +48,14 @@ if (-not $AppOnly) {
           $bak = Join-Path $Recomp 'out\patch-backup'
           foreach ($f in $touched) { if (Test-Path $f) { $d = Join-Path $bak (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $f $d -Force } }
           # über cmd, damit die Meldungen von git (stderr) unter Windows PowerShell 5.1 keinen Abbruch auslösen
-          cmd /c "git checkout HEAD -- $($touched -join ' ') 2>nul"
-          if ($LASTEXITCODE -ne 0) { throw 'Engine-Dateien ließen sich nicht zurücksetzen' }
+          # Grundlage: fnv-web-recomp $EngineBase (Stand des Originals); dessen spätere Spiel-Commits liegen als
+          # patches\0000-upstream-*.patch bei (Chat, Werbung, Website-Seiten bewusst nicht)
+          cmd /c "git cat-file -e $EngineBase 2>nul"
+          if ($LASTEXITCODE -ne 0) { cmd /c "git fetch origin 2>nul" }
+          cmd /c "git checkout -f --detach $EngineBase 2>nul"
+          if ($LASTEXITCODE -ne 0) { throw "Engine-Stand $EngineBase nicht verfügbar (git fetch im Ordner $Recomp)" }
+          # Dateien, die erst ein Patch anlegt (vom letzten Lauf noch da), wieder entfernen
+          cmd /c "git clean -fq -- $($touched -join ' ') 2>nul"
       }
       foreach ($p in $patches) {
           cmd /c "git apply `"$($p.FullName)`" 2>nul"

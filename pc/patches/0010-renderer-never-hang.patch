@@ -1,0 +1,51 @@
+diff --git a/web/recomp/index.html b/web/recomp/index.html
+index 002ef3a..c634d4b 100644
+--- a/web/recomp/index.html
++++ b/web/recomp/index.html
+@@ -632,6 +632,7 @@ async function pump() {
+   const H32 = M.HEAPU32, H8 = M.HEAPU8, F32 = M.HEAPF32, b = ring >>> 2;
+   const t0p = performance.now(), deadline = t0p + 14;
+   let more = false, paced = 0;
++  let cur = -1, curOp = 0, curLen = 0;              // the packet being executed (for the error path below)
+   try {
+     for (;;) {
+       const data = Atomics.load(H32, b), wr = Atomics.load(H32, b + 2);
+@@ -647,6 +648,7 @@ async function pump() {
+       while (rd !== wr) {
+         const pi = (data + rd) >>> 2, op = H32[pi], len = H32[pi + 1];
+         if (op === 0xffff) { rd = 0; continue; }
++        cur = rd; curOp = op; curLen = len;
+         n++;
+         if (!renderer.execHeap(op, H32, F32, pi + 2)) {
+           const p = data + rd;
+@@ -672,7 +674,15 @@ async function pump() {
+     }
+   } catch (e) {
+     pumpInfo.error = String(e.stack || e);
+-    log('renderer: ' + (e.stack || e), true);
++    pumpInfo.failed = (pumpInfo.failed || 0) + 1;
++    if (pumpInfo.failed <= 5) log('renderer: ' + (e.stack || e), true);
++    // go on after the packet that failed: from the last published read position the pump would run the packets since
++    // then again and fail on the same one for ever (the game then waits at Present: a frozen picture)
++    if (cur >= 0) {
++      Atomics.store(H32, b + 3, cur + 8 + curLen);
++      if (curOp === OP.PRESENT) { Atomics.add(H32, b + 5, 1); Atomics.notify(wakeView(H32), b + 5); }
++      more = true;
++    }
+   }
+   const now = performance.now();
+   pumpInfo.busyMs = (pumpInfo.busyMs || 0) + (now - t0p - paced);     // not the time spent holding a frame back
+diff --git a/web/recomp/renderer.js b/web/recomp/renderer.js
+index 0643318..4a092e1 100644
+--- a/web/recomp/renderer.js
++++ b/web/recomp/renderer.js
+@@ -501,6 +501,9 @@ export class Renderer {
+         sh.info = { ...sh.info, bindings: { ...sh.info.bindings, constants: { ...c, vec4_count: full } } };
+       }
+       sh.wgsl = code;
++    }).catch((e) => {
++      // a shader that cannot be had (no network, a damaged entry): its draws are skipped, they must not wait for ever
++      this.warn('shader ' + sha + ': ' + ((e && e.message) || e));
+     });
+     this.shaders.set(id, sh);
+   }

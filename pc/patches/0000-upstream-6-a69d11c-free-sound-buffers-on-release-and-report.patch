@@ -1,0 +1,256 @@
+diff --git a/port/recomp/host_web.cpp b/port/recomp/host_web.cpp
+index 8143522..4e6daed 100644
+--- a/port/recomp/host_web.cpp
++++ b/port/recomp/host_web.cpp
+@@ -7,6 +7,7 @@
+ // addresses above linear memory (0xF0000000..): they are dispatch keys, never dereferenced.
+ //
+ // usage (node): node fnv_web.js --exe <FalloutNV.exe> [--docs <folder>]
++#include <malloc.h>
+ #include <emscripten.h>
+ #include <emscripten/stack.h>
+ #include <pthread.h>
+@@ -512,6 +513,22 @@ void start_ring_dump(const char* path)
+ // the page's hooks (web/recomp/index.html): the command ring, and input as DirectInput sees it
+ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t fnv_ring() { return (uint32_t)(uintptr_t)pal_d3d_ring(); }
+ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t fnv_boot() { return (uint32_t)(uintptr_t)&g_pal_boot; }   // PalBoot (pal.h)
++// Heap use in KB: [0] malloc in use, [1] malloc arena (sbrk), [2] largest free chunk is not tracked by dlmalloc: 0,
++// then the platform layer's pools (pal.h PAL_MEM_*; the Vorbis count is a count). web/recomp/report.js samples it.
++extern "C" EMSCRIPTEN_KEEPALIVE uint32_t* fnv_mem_stats()
++{
++    static uint32_t out[3 + PAL_MEM_COUNT];
++    struct mallinfo mi = mallinfo();
++    out[0] = (uint32_t)mi.uordblks >> 10;
++    out[1] = (uint32_t)mi.arena >> 10;
++    out[2] = 0;
++    for (int i = 0; i < PAL_MEM_COUNT; ++i)
++    {
++        int64_t v = __atomic_load_n(&g_pal_mem[i], __ATOMIC_RELAXED);
++        out[3 + i] = (uint32_t)(i == PAL_MEM_VORBIS_N ? v : v >> 10);
++    }
++    return out;
++}
+ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t fnv_audio() { return (uint32_t)(uintptr_t)pal_sound_ring(); }
+ extern "C" EMSCRIPTEN_KEEPALIVE void fnv_key(int dik, int down) { pal_input_key(dik, down != 0); }
+ // debugging: Module.ccall('fnv_console', null, ['string'], ['player.additem f 100']) runs a console line
+diff --git a/port/recomp/pal.h b/port/recomp/pal.h
+index 158c3af..f8a041c 100644
+--- a/port/recomp/pal.h
++++ b/port/recomp/pal.h
+@@ -4,6 +4,12 @@
+ #pragma once
+ #include "fnv_recomp_host.h"
+ 
++// Heap use by the platform layer's own allocations, in bytes (problem reports sample them: an OOM names the pool
++// that grew). Index: PAL_MEM_*.
++enum { PAL_MEM_HEAP, PAL_MEM_TEX, PAL_MEM_BUF, PAL_MEM_VORBIS, PAL_MEM_VORBIS_N, PAL_MEM_SOUND, PAL_MEM_COUNT };
++extern int64_t g_pal_mem[PAL_MEM_COUNT];
++inline void pal_mem_add(int i, int64_t n) { __atomic_add_fetch(&g_pal_mem[i], n, __ATOMIC_RELAXED); }
++
+ struct PalEntry
+ {
+     const char* name;   // the import's name as the exe's import table spells it
+diff --git a/port/recomp/pal_d3d9.cpp b/port/recomp/pal_d3d9.cpp
+index bd463c5..45fd825 100644
+--- a/port/recomp/pal_d3d9.cpp
++++ b/port/recomp/pal_d3d9.cpp
+@@ -210,6 +210,7 @@ uint32_t level_mem(Tex* t, uint32_t face, uint32_t level)
+         uint32_t pitch, rows;
+         uint32_t bytes = pal_d3d_format_bytes(t->fmt, t->lw(level), t->lh(level), &pitch, &rows) * t->ld(level);
+         L.mem = (uint32_t)(uintptr_t)calloc(1, bytes ? bytes : 4);
++        pal_mem_add(PAL_MEM_TEX, bytes);
+         L.bytes = bytes; L.pitch = pitch; L.rows = rows;
+     }
+     return L.mem;
+@@ -242,7 +243,7 @@ void destroy_tex(Tex* t)
+ {
+     emit(OP_DESTROY, {t->id});
+     for (Level& L : t->lv)
+-        if (L.mem) free((void*)(uintptr_t)L.mem);
++        if (L.mem) { free((void*)(uintptr_t)L.mem); pal_mem_add(PAL_MEM_TEX, -(int64_t)L.bytes); }
+     t->lv.clear();
+ }
+ 
+@@ -409,7 +410,7 @@ void bf_Release(FnvCpu& s)
+ {
+     Buf* b = bufo(s);
+     uint32_t r = release(A(0));
+-    if (!r) { emit(OP_DESTROY, {b->id}); free((void*)(uintptr_t)b->mem); b->mem = 0; }
++    if (!r) { emit(OP_DESTROY, {b->id}); free((void*)(uintptr_t)b->mem); b->mem = 0; pal_mem_add(PAL_MEM_BUF, -(int64_t)b->size); }
+     RET(r, 1);
+ }
+ void bf_Lock(FnvCpu& s)
+@@ -650,6 +651,7 @@ uint32_t new_buffer(Device* d, uint32_t size, uint32_t kind, uint32_t usage, uin
+     Buf* b = new Buf{g_next_id.fetch_add(1), size, kind, usage, pool, fvf, fmt, 0};
+     b->dev = d;
+     b->mem = (uint32_t)(uintptr_t)calloc(1, size ? size : 4);
++    pal_mem_add(PAL_MEM_BUF, size);
+     b->obj = com_new(buffer_class(kind != 0), b);
+     emit(OP_CREATE_BUFFER, {b->id, size, kind});
+     return b->obj;
+diff --git a/port/recomp/pal_dsound.cpp b/port/recomp/pal_dsound.cpp
+index 46453a5..48221d7 100644
+--- a/port/recomp/pal_dsound.cpp
++++ b/port/recomp/pal_dsound.cpp
+@@ -29,6 +29,7 @@ uint64_t now_ms()
+ struct Buffer
+ {
+     uint32_t data = 0, size = 0, flags = 0;
++    uint32_t* data_refs = nullptr; // buffers sharing `data` (DuplicateSoundBuffer); the last Release frees it
+     uint32_t rate = 22050, channels = 2, bits = 16, avg = 88200, block = 4;
+     int32_t volume = 0, pan = 0;
+     uint32_t freq = 0;
+@@ -197,10 +198,21 @@ void b_Release(FnvCpu& s)
+     M32(o + 8) = r;
+     if (!r)
+     {
+-        std::lock_guard<std::mutex> lk(g_mx);
++        std::lock_guard<std::mutex> lk(g_mx);              // the mixer reads `data` under this lock
+         Buffer* b = buf(s);
+         b->playing = false;
+         b->dead = true;
++        // Free the samples once no duplicate shares them. Every sound the game plays is a buffer: keeping them filled
++        // the 3 GB heap in a few minutes of play (problem report 20261113-IQTFGH, Aborted(OOM)).
++        if (b->data_refs && !--*b->data_refs)
++        {
++            free((void*)(uintptr_t)b->data);
++            pal_mem_add(PAL_MEM_SOUND, -(int64_t)b->size);
++            delete b->data_refs;
++        }
++        b->data_refs = nullptr;
++        b->data = 0;
++        b->size = 0;                                       // a stray call after the release sees an empty buffer
+     }
+     RET(r, 1);
+ }
+@@ -267,6 +279,8 @@ void s_CreateSoundBuffer(FnvCpu& s)
+     if (!b->block) b->block = 4;
+     if (!b->avg) b->avg = b->rate * b->block;
+     b->data = (uint32_t)(uintptr_t)calloc(1, b->size ? b->size : 4);
++    b->data_refs = new uint32_t(1);
++    pal_mem_add(PAL_MEM_SOUND, b->size);
+     b->obj = com_new(buffer_class(), b);
+     if (!b->primary) { std::lock_guard<std::mutex> lk(g_mx); g_buffers.push_back(b); }
+     M32(A(2)) = b->obj;
+@@ -275,11 +289,13 @@ void s_CreateSoundBuffer(FnvCpu& s)
+ void s_DuplicateSoundBuffer(FnvCpu& s)
+ {
+     Buffer* o = (Buffer*)com_host(A(1));
++    std::lock_guard<std::mutex> lk(g_mx);
+     Buffer* b = new Buffer(*o);
+     b->playing = false; b->start_pos = 0; b->obj3d = b->notify = 0;
+     b->dead = false; b->mixpos = 0;
++    if (b->data_refs) ++*b->data_refs;                   // shares the original's samples
+     b->obj = com_new(buffer_class(), b);
+-    { std::lock_guard<std::mutex> lk(g_mx); g_buffers.push_back(b); }
++    g_buffers.push_back(b);
+     M32(A(2)) = b->obj;
+     RET(0, 3);
+ }
+@@ -314,7 +330,8 @@ void mix_chunk(float* out, uint32_t n)
+ {
+     memset(out, 0, n * 8);
+     std::lock_guard<std::mutex> lk(g_mx);
+-    // released buffers leave the mix list (their memory stays: duplicates share it, guest objects are not reused)
++    // released buffers leave the mix list (their samples were freed by the last Release; the small Buffer and guest
++    // object stay, so a stray call on a released object finds an empty buffer)
+     g_buffers.erase(std::remove_if(g_buffers.begin(), g_buffers.end(), [](Buffer* b) { return b->dead; }), g_buffers.end());
+     for (Buffer* b : g_buffers)
+     {
+diff --git a/port/recomp/pal_kernel.cpp b/port/recomp/pal_kernel.cpp
+index d574d91..71cf3e9 100644
+--- a/port/recomp/pal_kernel.cpp
++++ b/port/recomp/pal_kernel.cpp
+@@ -20,6 +20,7 @@
+ #include <unordered_map>
+ #include <vector>
+ 
++int64_t g_pal_mem[PAL_MEM_COUNT];
+ 
+ namespace {
+ int strcasecmp_portable(const char* a, const char* b);
+@@ -368,6 +369,7 @@ uint32_t heap_alloc(uint32_t size, bool zero)
+ {
+     uint8_t* p = (uint8_t*)(zero ? calloc(1, size + kHeapHeader) : malloc(size + kHeapHeader));
+     if (!p) return 0;
++    pal_mem_add(PAL_MEM_HEAP, size);
+     memcpy(p, &size, 4);
+     memcpy(p + 4, "FNVH", 4);
+     return (uint32_t)(uintptr_t)(p + kHeapHeader);
+@@ -378,6 +380,7 @@ void heap_free(uint32_t p)
+ {
+     if (heap_ours(p))
+     {
++        pal_mem_add(PAL_MEM_HEAP, -(int64_t)heap_size(p));
+         memset((void*)(uintptr_t)(p - kHeapHeader + 4), 0, 4);
+         free((void*)(uintptr_t)(p - kHeapHeader));
+     }
+diff --git a/port/recomp/pal_user.cpp b/port/recomp/pal_user.cpp
+index 7661973..90aa88f 100644
+--- a/port/recomp/pal_user.cpp
++++ b/port/recomp/pal_user.cpp
+@@ -561,6 +561,8 @@ void ov_open_callbacks_(FnvCpu& s)
+         f->info = (uint32_t)(uintptr_t)calloc(8, 4);
+         M32(f->info + 4) = f->channels;
+         M32(f->info + 8) = f->rate;
++        pal_mem_add(PAL_MEM_VORBIS, (int64_t)f->frames * f->channels * 2);
++        pal_mem_add(PAL_MEM_VORBIS_N, 1);
+     }
+     free(req);
+     {
+@@ -571,7 +573,9 @@ void ov_open_callbacks_(FnvCpu& s)
+     }
+     if (!f) RETC(0xFFFFFF7Cu);
+     std::lock_guard<std::mutex> lk(g_ov_mx);
+-    g_ov[vf] = f;
++    OvFile*& slot = g_ov[vf];
++    if (slot) fnv_host_log("[vorbis] reopened without ov_clear\n");
++    slot = f;
+     RETC(0);
+ #else
+     RETC(0xFFFFFF7Cu);
+@@ -614,6 +618,8 @@ void ov_clear_(FnvCpu& s)
+     {
+         if (f->close_fn) { uint32_t args[1] = {f->datasource}; fnv_guest_call(s, f->close_fn, args, 1); }
+         free((void*)(uintptr_t)f->pcm);
++        pal_mem_add(PAL_MEM_VORBIS, -(int64_t)f->frames * f->channels * 2);
++        pal_mem_add(PAL_MEM_VORBIS_N, -1);
+         free((void*)(uintptr_t)f->info);
+         delete f;
+     }
+diff --git a/tools/recomp_build_web.py b/tools/recomp_build_web.py
+index 31c6c55..3cb99ef 100644
+--- a/tools/recomp_build_web.py
++++ b/tools/recomp_build_web.py
+@@ -40,7 +40,7 @@ if LTO:
+ TARGETS = {
+     'node': ('web', 'pal_fs_web.cpp', ['-sNODERAWFS=1', '-sENVIRONMENT=node,worker']),
+     'browser': ('web_browser', 'pal_fs_std.cpp', ['-sENVIRONMENT=web,worker', '-sPROXY_TO_PTHREAD=1',
+-                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot',
++                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot,_fnv_mem_stats',
+                 '-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32,HEAPF32,ccall']),
+ }
+ 
+diff --git a/web/recomp/report.js b/web/recomp/report.js
+index 3980f2a..c3d8e72 100644
+--- a/web/recomp/report.js
++++ b/web/recomp/report.js
+@@ -96,6 +96,10 @@
+       if (b) Object.assign(s, { phase: b.phase, stage: b.stage, kb: b.kb, fetches: b.fetches, retries: b.retries, ready: b.ready });
+       if (r && r.stats) Object.assign(s, { draws: r.stats.draws, skipped: r.stats.skipped, pipelines: r.pipelines && r.pipelines.size });
+       if (M && M.HEAPU8) s.heapMB = Math.round(M.HEAPU8.length / 1048576);
++      if (M && M._fnv_mem_stats) {   // KB: malloc in use, malloc arena, -, game HeapAlloc, textures, buffers, voices (+ count), sound buffers
++        const w = (M._fnv_mem_stats() >>> 0) >>> 2, u = M.HEAPU32;
++        s.mem = { used: u[w] >> 10, arena: u[w + 1] >> 10, heap: u[w + 3] >> 10, tex: u[w + 4] >> 10, buf: u[w + 5] >> 10, vorbis: u[w + 6] >> 10, voices: u[w + 7], sound: u[w + 8] >> 10 };
++      }
+       if (performance.memory) s.jsMB = Math.round(performance.memory.usedJSHeapSize / 1048576);
+       if (window.fnvPump) { s.pumpBusyMs = Math.round(window.fnvPump.busyMs || 0); s.packets = window.fnvPump.packets; }
+       if (window.fnvAudio) { s.audio = window.fnvAudio.ctx ? window.fnvAudio.ctx.state : 'none'; s.underruns = window.fnvAudio.underruns; }
+@@ -284,6 +288,7 @@
+     L.push(`Status bar: ${rep.page.status}`);
+     const s = rep.samples[rep.samples.length - 1];
+     if (s) L.push(`Last sample: ${s.fps} fps, frame ${s.frames}, heap ${s.heapMB} MB, JS ${s.jsMB} MB`);
++    if (s && s.mem) L.push(`Memory (MB): malloc ${s.mem.used} of ${s.mem.arena}, game heap ${s.mem.heap}, textures ${s.mem.tex}, buffers ${s.mem.buf}, voices ${s.mem.vorbis} (${s.mem.voices} open), sound buffers ${s.mem.sound}`);
+     if (rep.game.player && rep.game.player.cell) L.push(`Player: cell ${rep.game.player.cell}, worldspace ${rep.game.player.worldspace}, at ${rep.game.player.pos.join(', ')}`);
+     if (rep.game.present && rep.game.present.presents) L.push(`Frames: ${rep.game.present.presents} presented, ${rep.game.present.avgFrameMs} ms average`);
+     if (rep.build && typeof rep.build === 'object') L.push(`Build: ${rep.build.built || rep.build.version || JSON.stringify(rep.build).slice(0, 120)}`);

@@ -1,17 +1,17 @@
 diff --git a/web/recomp/renderer.js b/web/recomp/renderer.js
-index 2dbb1a9..90c8aca 100644
+index c0f17f4..0643318 100644
 --- a/web/recomp/renderer.js
 +++ b/web/recomp/renderer.js
-@@ -277,6 +277,8 @@ export class Renderer {
+@@ -280,6 +280,8 @@ export class Renderer {
      this.modules = new Map();
      this.pipelines = new Map();
      this.layouts = new Map();
 +    this.pipeLayouts = new Map();
-+    this.bgByView = new Map(); this.bgMade = 0;            // texture view id -> bind group keys that use it (dropped with the texture)
++    this.bgMade = 0;                     // bind groups made since the last full clear (bounds bgByTex)
      this.samplers = new Map();
      this.bindGroups = new Map();
-     this.vstates = new Map();            // vertex layouts by shader, declaration and stream strides
-@@ -341,6 +343,7 @@ export class Renderer {
+     this.bgByTex = new Map();            // texture id -> keys of the bind groups that hold one of its views
+@@ -351,6 +353,7 @@ export class Renderer {
        @fragment fn fs(v : V) -> @location(0) vec4<f32> { return vec4<f32>(textureSample(t, s, v.uv).rgb, 1.0); }`;
      const m = this.dev.createShaderModule({ code });
      this.blitPipes = new Map();
@@ -19,7 +19,7 @@ index 2dbb1a9..90c8aca 100644
      this.blitModule = m;
      this.blitSampler = this.dev.createSampler({ magFilter: 'linear', minFilter: 'linear' });
    }
-@@ -359,7 +362,13 @@ export class Renderer {
+@@ -369,7 +372,13 @@ export class Renderer {
      const pipe = this.blitPipe(format);
      pass.setPipeline(pipe);
      if (rect) pass.setViewport(rect[0], rect[1], rect[2], rect[3], 0, 1);
@@ -34,21 +34,7 @@ index 2dbb1a9..90c8aca 100644
      pass.draw(3);
      pass.end();
    }
-@@ -455,7 +464,12 @@ export class Renderer {
-   }
-   destroy(id) {
-     const t = this.textures.get(id);
--    if (t && id !== 1) { this.endPass(); this.pendingDestroy = (this.pendingDestroy || []).concat([t.gpu]); this.textures.delete(id); this.bindGroups.clear(); }
-+    if (t && id !== 1) {
-+      this.endPass(); this.pendingDestroy = (this.pendingDestroy || []).concat([t.gpu]); this.textures.delete(id);
-+      const vid = t.sampleView && this.objIds.get(t.sampleView);
-+      const keys = vid && this.bgByView.get(vid);
-+      if (keys) { for (const k of keys) this.bindGroups.delete(k); this.bgByView.delete(vid); }
-+    }
-     const b = this.buffers.get(id);
-     if (b) { this.pendingDestroy = (this.pendingDestroy || []).concat([b.gpu]); this.buffers.delete(id); }
-     this.shaders.delete(id);
-@@ -818,7 +832,9 @@ export class Renderer {
+@@ -840,7 +849,9 @@ export class Renderer {
        try {
          const nvs = vs.info.bindings.samplers.length;
          const vsl = this.stageLayout(vs, 0, texKinds.slice(0, nvs)), psl = this.stageLayout(ps, 1, texKinds.slice(nvs));
@@ -59,29 +45,20 @@ index 2dbb1a9..90c8aca 100644
          const stripFormat = topology === 'triangle-strip' || topology === 'line-strip' ? (indexed ? (stripBits === 32 ? 'uint32' : 'uint16') : undefined) : undefined;
          const desc = {
            layout,
-@@ -884,9 +900,17 @@ export class Renderer {
+@@ -923,7 +934,8 @@ export class Renderer {
            entries.push({ binding: smps[i].texture_binding, resource: texViews[ti + i] });
            entries.push({ binding: smps[i].sampler_binding, resource: samplers[ti + i] });
          }
--        if (this.bindGroups.size > 50000) this.bindGroups.clear();
+-        if (this.bindGroups.size > 50000) { this.bindGroups.clear(); this.bgByTex.clear(); }
 +        // bounded by groups made, not by live ones: destroy() removes groups, so the map alone might never reach it
-+        if (++this.bgMade > 50000) { this.bindGroups.clear(); this.bgByView.clear(); this.bgMade = 0; }
++        if (++this.bgMade > 50000) { this.bindGroups.clear(); this.bgByTex.clear(); this.bgMade = 0; }
          bg = this.dev.createBindGroup({ layout, entries });
          this.bindGroups.set(bkey, bg);
-+        for (let i = 0; i < smps.length; i++) {
-+          const v = texViews[ti + i];
-+          if (v === this.dummy['2d'] || v === this.dummy.cube || v === this.dummy['3d']) continue;   // never destroyed
-+          const vid = this.objId(v);
-+          const ks = this.bgByView.get(vid);
-+          if (ks) ks.add(bkey); else this.bgByView.set(vid, new Set([bkey]));
-+        }
-       }
-       ti += smps.length;
-       // constants unchanged since this pass last uploaded at least as many: reuse that upload, and skip the call
-@@ -1042,7 +1066,9 @@ export class Renderer {
-       return;
-     }
+         for (let i = 0; i < smps.length; i++) {
+@@ -1090,7 +1102,9 @@ export class Renderer {
      if (!(d.gpu.usage & GPUTextureUsage.RENDER_ATTACHMENT)) return;
+     // compatibility mode samples a texture only through a view of all its layers: no single cube face
+     if (this.compat && s.kind === 1) { this.warn('stretch from a cube face (compatibility mode): skipped'); return; }
 -    const view = s.gpu.createView({ dimension: '2d', baseMipLevel: sl, mipLevelCount: 1, baseArrayLayer: sf, arrayLayerCount: 1 });
 +    const vk = sl + ':' + sf, views = s.blitViews || (s.blitViews = new Map());
 +    let view = views.get(vk);

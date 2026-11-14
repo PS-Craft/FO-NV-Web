@@ -88,7 +88,7 @@ try {
 // Shader-Paket (oben) sofort anfordern; der Renderer fragt jeden Shader hier nach (sonst einzeln vom Server)
 window.fonvShader = (function () {
   var name = ${JSON.stringify(shaderPack)};
-  var one = function (sha) { return fetch('/shader/' + sha).then(function (r) { return r.ok ? r.json() : null; }); };
+  var one = function (sha) { return fetch('/shader/' + sha).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }); };
   if (!name) return undefined;
   // als Bytes behalten (~12 MB, offline gibt es die Einzeldateien nicht mehr), jeder Shader erst bei Bedarf entschlüsselt
   var pack = fetch('/' + name).then(function (r) { return r.ok ? r.arrayBuffer() : null; }).then(function (buf) {
@@ -98,7 +98,11 @@ window.fonvShader = (function () {
     return { b: b, m: m, dec: dec };
   }).catch(function () { return null; });
   return function (sha) {
-    return pack.then(function (p) { var s = p && p.m.get(sha); return s ? JSON.parse(p.dec.decode(p.b.subarray(s[0], s[1]))) : one(sha); });
+    return pack.then(function (p) {
+      var s = p && p.m.get(sha);
+      if (s) try { return JSON.parse(p.dec.decode(p.b.subarray(s[0], s[1]))); } catch (e) { /* beschädigt: einzeln */ }
+      return one(sha);
+    });
   };
 })();
 </script>
@@ -129,22 +133,11 @@ patch(`if (data && performance.now() < deadline - 2) { await yieldSoon(); contin
           } else await yieldSoon();
           continue;
         }`, 'Pump-Schleife');
-// Akku sparen (localStorage fonv.fps = 30, in der App und im ☰-Menü wählbar): höchstens jedes zweite Bild des
-// Bildschirms. Das Spiel wartet dann länger auf die Seite und rechnet weniger – weniger Akku, weniger Wärme.
-patch(`  if (!PACE || presentSeq !== rafSeq || performance.now() - rafAt > 100) { presentSeq = rafSeq; return 0; }
-  const t0 = performance.now();
-  pumpInfo.vsyncWaits = (pumpInfo.vsyncWaits || 0) + 1;
-  await within(40, (f) => rafWaiters.push(f));
-  presentSeq = rafSeq;
-  return performance.now() - t0;`,
-  `  let every = 1;
-  try { every = localStorage.getItem('fonv.fps') === '30' ? 2 : 1; } catch {}
-  if (!PACE || rafSeq - presentSeq >= every || performance.now() - rafAt > 100) { presentSeq = rafSeq; return 0; }
-  const t0 = performance.now();
-  pumpInfo.vsyncWaits = (pumpInfo.vsyncWaits || 0) + 1;
-  while (rafSeq - presentSeq < every && performance.now() - t0 < 80) await within(40, (f) => rafWaiters.push(f));
-  presentSeq = rafSeq;
-  return performance.now() - t0;`, 'Bildtaktung');
+// Akku sparen (localStorage fonv.fps = 30, in der App und im ☰-Menü wählbar): höchstens 30 Bilder pro Sekunde. Die
+// Bildtaktung der Spielseite (gleichmäßiger Takt, fnv-web-recomp 66457f7) kennt dafür ?fps=; wir setzen denselben Wert.
+patch("const fpsCap = +new URLSearchParams(location.search).get('fps') || 0;",
+  "const fpsCap = +new URLSearchParams(location.search).get('fps') || ((() => { try { return localStorage.getItem('fonv.fps') === '30' ? 30 : 0; } catch { return 0; } })());",
+  'Bildtaktung (fps)');
 // Musik-Spieler ersetzen (tools/music.js): der alte behielt jedes entpackte Stück für immer im Speicher
 {
   const from = 'const tracks = new Map();\naudio.tracks = tracks;\nconst decoded = new Map();';

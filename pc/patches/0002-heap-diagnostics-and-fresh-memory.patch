@@ -1,8 +1,8 @@
 diff --git a/port/recomp/host_web.cpp b/port/recomp/host_web.cpp
-index 8143522..a27c3b9 100644
+index 4e6daed..5f3cc2c 100644
 --- a/port/recomp/host_web.cpp
 +++ b/port/recomp/host_web.cpp
-@@ -12,6 +12,7 @@
+@@ -13,6 +13,7 @@
  #include <pthread.h>
  #include <stdarg.h>
  #include <stdio.h>
@@ -10,7 +10,7 @@ index 8143522..a27c3b9 100644
  #include <stdlib.h>
  #include <string.h>
  #include <unistd.h>
-@@ -77,12 +78,53 @@ struct HostThread
+@@ -78,12 +79,53 @@ struct HostThread
  thread_local HostThread* t_ht;
  HostThread* g_main_ht;                          // the game's main thread, for fnv_dump_state after a wasm trap
  
@@ -65,7 +65,7 @@ index 8143522..a27c3b9 100644
  
  HostThread* g_all_threads[64];                   // for fnv_dump_threads
  
-@@ -251,7 +293,7 @@ void w_VirtualFree(FnvCpu& s)
+@@ -252,7 +294,7 @@ void w_VirtualFree(FnvCpu& s)
      if ((harg(s, 2) & 0x8000) && g_vm.count(addr))   // MEM_RELEASE of a whole block
      {
          g_vm.erase(addr);
@@ -74,7 +74,7 @@ index 8143522..a27c3b9 100644
      }
      hret(s, 1, 3);
  }
-@@ -601,6 +643,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE void fnv_dump_threads()
+@@ -618,6 +660,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE void fnv_dump_threads()
  // while the game runs: the stack may change under the walk, which only costs a wrong sample now and then.
  extern "C" uint64_t* fnv_present_stats();
  extern "C" EMSCRIPTEN_KEEPALIVE uint32_t fnv_perf() { return (uint32_t)(uintptr_t)fnv_present_stats(); }
@@ -85,15 +85,15 @@ index 8143522..a27c3b9 100644
  extern "C" EMSCRIPTEN_KEEPALIVE int fnv_sample(uint32_t* out, int max)
  {
 diff --git a/tools/recomp_build_web.py b/tools/recomp_build_web.py
-index 31c6c55..1e860a3 100644
+index 3cb99ef..ce64a5f 100644
 --- a/tools/recomp_build_web.py
 +++ b/tools/recomp_build_web.py
 @@ -40,7 +40,7 @@ if LTO:
  TARGETS = {
      'node': ('web', 'pal_fs_web.cpp', ['-sNODERAWFS=1', '-sENVIRONMENT=node,worker']),
      'browser': ('web_browser', 'pal_fs_std.cpp', ['-sENVIRONMENT=web,worker', '-sPROXY_TO_PTHREAD=1',
--                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot',
-+                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_sbrk,_fnv_heap_used,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot',
+-                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot,_fnv_mem_stats',
++                '-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_sbrk,_fnv_heap_used,_fnv_sound_debug,_fnv_dump_threads,_fnv_console,_fnv_sample,_fnv_perf,_fnv_boot,_fnv_mem_stats',
                  '-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32,HEAPF32,ccall']),
  }
  

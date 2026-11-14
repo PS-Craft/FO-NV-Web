@@ -154,6 +154,21 @@ Jeder Spieler hat **eigene Spielstände, Backups und DLC-Einstellungen**.
 **Getestet** (ohne echtes Spiel, mit Ersatz-Spielseite): Apache + PHP mit Passwortschutz, 24 Unit-Tests
 (`npm test`) und ein Klick-Test durch die ganze App mit 13 Prüfungen (`tools/e2e-app.cjs`).
 
+## Engine: Stand und eigene Änderungen
+
+`pc/build.ps1` baut die Engine (fnv-web-recomp von SgtMetz) immer vom selben Stand aus: Commit **8f79919**. Darauf
+spielt es der Reihe nach alle Dateien aus `pc/patches` ein:
+
+- `0000-upstream-*`: spätere Verbesserungen des Originals, die das **Spiel** betreffen. Im Dateinamen steht die
+  Commit-Nummer des Originals. Übernommen: Rückfall auf den WebGPU-Kompatibilitätsmodus, gleichmäßiger Bildtakt,
+  Shader-Kombinationen im Hintergrund kompilieren, roher Mauseingang, Threads gezielt wecken, Sound-Puffer freigeben,
+  Messwerkzeug für Bildzeiten, Paketliste ohne Website-Seiten. **Nicht** übernommen: Chat, Werbung, Besucher-Statistik,
+  Website-Seiten.
+- `0001`–`0010`: unsere eigenen Korrekturen (Ladezeiten, Speicher, Abstürze; Kurzbeschreibung jeweils im Dateinamen
+  und in den Commit-Nachrichten dieses Repos).
+
+Die bisherigen Fassungen geänderter Engine-Dateien legt der Build vorher in `fnv-web-recomp\out\patch-backup` ab.
+
 ## Noch nicht fertig
 
 - **Offline auf dem iPad:** in Chrome geprüft; ob Safari die Datei-Anfragen des Spiels über den Service Worker

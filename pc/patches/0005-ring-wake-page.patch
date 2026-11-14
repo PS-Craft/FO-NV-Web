@@ -1,5 +1,5 @@
 diff --git a/port/recomp/pal_d3d9.cpp b/port/recomp/pal_d3d9.cpp
-index e9bad8b..b9246c9 100644
+index 45fd825..72fb676 100644
 --- a/port/recomp/pal_d3d9.cpp
 +++ b/port/recomp/pal_d3d9.cpp
 @@ -1,5 +1,8 @@
@@ -11,7 +11,7 @@ index e9bad8b..b9246c9 100644
  
  #include <math.h>
  #include <stdio.h>
-@@ -67,6 +70,12 @@ void emit(uint32_t op, std::initializer_list<uint32_t> words, const void* data =
+@@ -71,6 +74,12 @@ void emit(uint32_t op, std::initializer_list<uint32_t> words, const void* data =
      for (uint32_t v : words) { M32(q) = v; q += 4; }
      if (len) memcpy((void*)(uintptr_t)q, data, len);
      __atomic_store_n(&g_ring.write, w + total, __ATOMIC_RELEASE);

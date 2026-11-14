@@ -1,8 +1,8 @@
 diff --git a/port/recomp/pal_kernel.cpp b/port/recomp/pal_kernel.cpp
-index b1dc4a7..1e822c6 100644
+index 71cf3e9..d27d04a 100644
 --- a/port/recomp/pal_kernel.cpp
 +++ b/port/recomp/pal_kernel.cpp
-@@ -401,14 +401,49 @@ void k_IsDebuggerPresent(FnvCpu& s) { RET(0, 0); }
+@@ -422,14 +422,49 @@ void k_IsDebuggerPresent(FnvCpu& s) { RET(0, 0); }
  
  // ---- interlocked --------------------------------------------------------------------------------------------------
  uint32_t* gp(uint32_t a) { return (uint32_t*)(uintptr_t)a; }
